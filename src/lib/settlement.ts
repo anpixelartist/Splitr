@@ -1,25 +1,32 @@
-import type { Expense, Balance, SettlementTransaction } from '../types';
+import type { Expense, Balance, SettlementTransaction, SettlementRecord } from '../types';
 
 /**
- * Calculates the net balances for each user based on a list of expenses.
+ * Calculates the net balances for each user based on expenses and any
+ * previously-recorded settlement payments. Settlement records reduce
+ * outstanding debts by crediting the payer (from) and debiting the receiver (to).
  */
-export function calculateBalances(expenses: Expense[]): Record<string, Balance> {
+export function calculateBalances(
+  expenses: Expense[],
+  settlementRecords: SettlementRecord[] = [],
+): Record<string, Balance> {
   const balances: Record<string, number> = {};
 
   for (const expense of expenses) {
-    // 1. Credit the person who paid
     balances[expense.paidBy] = (balances[expense.paidBy] || 0) + expense.amount;
-
-    // 2. Debit everyone based on their split
     for (const split of expense.splits) {
       balances[split.userId] = (balances[split.userId] || 0) - split.amount;
     }
   }
 
-  // Convert to the Balance type format
+  // Each recorded settlement cancels out that much debt:
+  // the payer (from) gets credited, the receiver (to) gets debited.
+  for (const record of settlementRecords) {
+    balances[record.from] = (balances[record.from] || 0) + record.amount;
+    balances[record.to] = (balances[record.to] || 0) - record.amount;
+  }
+
   const result: Record<string, Balance> = {};
   for (const [userId, netBalance] of Object.entries(balances)) {
-    // Round to avoid floating point issues (e.g. 0.1 + 0.2 = 0.30000000000000004)
     result[userId] = {
       userId,
       netBalance: Math.round(netBalance * 100) / 100,
