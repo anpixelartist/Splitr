@@ -3,26 +3,26 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useGroup } from '../context/GroupContext';
 import { Wallet, Users, PlusCircle, UserPlus } from 'lucide-react';
+import { CreateGroupModal } from '../components/CreateGroupModal';
+import { ProfileModal } from '../components/ProfileModal';
+import { useToast } from '../context/ToastContext';
 
 export const Home: React.FC = () => {
-  const { userName, updateUserName } = useAuth();
+  const { userName, contacts, addContact } = useAuth();
   const { groups, createGroup, joinGroup } = useGroup();
   const navigate = useNavigate();
+  const { showToast } = useToast();
 
-  const [editingName, setEditingName] = useState(false);
-  const [tempName, setTempName] = useState(userName);
-  const [newGroupName, setNewGroupName] = useState('');
   const [joinCode, setJoinCode] = useState('');
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
 
-  const handleUpdateName = () => {
-    updateUserName(tempName);
-    setEditingName(false);
-  };
-
-  const handleCreateGroup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newGroupName.trim()) return;
-    const id = await createGroup(newGroupName);
+  const handleCreateGroup = async (
+    groupName: string,
+    participants: { id: string; name: string }[],
+  ) => {
+    const id = await createGroup(groupName, participants);
+    setShowCreateModal(false);
     navigate(`/group/${id}`);
   };
 
@@ -33,58 +33,49 @@ export const Home: React.FC = () => {
     if (success) {
       navigate(`/group/${joinCode.toUpperCase()}`);
     } else {
-      alert("Group not found");
+      showToast('Group not found — check the code and try again.', 'error');
     }
   };
 
+  const totalMembers = (group: { members: string[]; participants?: { id: string; name: string }[] }) =>
+    group.members.length + (group.participants?.length ?? 0);
+
   return (
     <div className="max-w-md mx-auto p-4 space-y-8">
+
+      {/* ── Header ── */}
       <header className="flex items-center justify-between py-4">
         <div className="flex items-center gap-2">
           <Wallet className="w-8 h-8 text-blue-600" />
           <h1 className="text-2xl font-bold text-gray-900">Splitr</h1>
         </div>
-        <div className="text-sm">
-          {editingName ? (
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={tempName}
-                onChange={e => setTempName(e.target.value)}
-                className="border rounded px-2 py-1 w-32"
-                autoFocus
-              />
-              <button onClick={handleUpdateName} className="text-blue-600 font-semibold">Save</button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 cursor-pointer" onClick={() => setEditingName(true)}>
-              <div className="w-8 h-8 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold">
-                {userName.charAt(0).toUpperCase()}
-              </div>
-              <span className="font-medium">{userName}</span>
-            </div>
-          )}
-        </div>
+
+        {/* Avatar — opens Profile modal */}
+        <button
+          onClick={() => setShowProfile(true)}
+          className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+          title="Profile & contacts"
+        >
+          <div className="w-9 h-9 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold text-sm select-none">
+            {userName.charAt(0).toUpperCase()}
+          </div>
+          <span className="text-sm font-medium text-gray-700 hidden sm:block">{userName}</span>
+        </button>
       </header>
 
+      {/* ── Actions ── */}
       <section className="space-y-4">
         <div className="bg-white p-6 rounded-xl shadow-sm border">
           <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
             <PlusCircle className="w-5 h-5 text-blue-500" />
             Create a New Group
           </h2>
-          <form onSubmit={handleCreateGroup} className="flex gap-2">
-            <input
-              type="text"
-              placeholder="e.g. Weekend Trip"
-              className="flex-1 border rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
-              value={newGroupName}
-              onChange={e => setNewGroupName(e.target.value)}
-            />
-            <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700">
-              Create
-            </button>
-          </form>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="w-full bg-blue-600 text-white py-2.5 rounded-xl font-medium hover:bg-blue-700 transition-colors"
+          >
+            New Group…
+          </button>
         </div>
 
         <div className="bg-white p-6 rounded-xl shadow-sm border">
@@ -96,17 +87,21 @@ export const Home: React.FC = () => {
             <input
               type="text"
               placeholder="Enter Group Code"
-              className="flex-1 border rounded-lg px-4 py-2 uppercase focus:ring-2 focus:ring-green-500 outline-none"
+              className="flex-1 border rounded-xl px-4 py-2.5 uppercase focus:ring-2 focus:ring-green-500 outline-none tracking-widest"
               value={joinCode}
               onChange={e => setJoinCode(e.target.value)}
             />
-            <button type="submit" className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700">
+            <button
+              type="submit"
+              className="bg-green-600 text-white px-4 py-2.5 rounded-xl font-medium hover:bg-green-700 transition-colors"
+            >
               Join
             </button>
           </form>
         </div>
       </section>
 
+      {/* ── Groups list ── */}
       <section>
         <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
           <Users className="w-6 h-6 text-gray-700" />
@@ -124,7 +119,7 @@ export const Home: React.FC = () => {
               >
                 <div>
                   <h3 className="font-semibold text-lg">{group.name}</h3>
-                  <p className="text-sm text-gray-500">{group.members.length} members</p>
+                  <p className="text-sm text-gray-500">{totalMembers(group)} members</p>
                 </div>
                 <div className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600 font-mono">
                   {group.id}
@@ -134,6 +129,20 @@ export const Home: React.FC = () => {
           </div>
         )}
       </section>
+
+      {/* ── Modals ── */}
+      {showCreateModal && (
+        <CreateGroupModal
+          contacts={contacts}
+          onAddContact={addContact}
+          onClose={() => setShowCreateModal(false)}
+          onCreate={handleCreateGroup}
+        />
+      )}
+
+      {showProfile && (
+        <ProfileModal onClose={() => setShowProfile(false)} />
+      )}
     </div>
   );
 };

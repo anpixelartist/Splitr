@@ -2,26 +2,22 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Home } from './pages/Home';
 import { GroupDetails } from './pages/GroupDetails';
+import { LoginPage } from './pages/LoginPage';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { GroupProvider } from './context/GroupContext';
+import { ToastProvider } from './context/ToastContext';
 
 const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, loading } = useAuth();
-
-  if (loading) {
-    return <div className="min-h-screen flex items-center justify-center text-blue-600 font-bold">Loading...</div>;
-  }
-
-  if (!user) {
-    return <Navigate to="/" />;
-  }
-
+  const { user } = useAuth();
+  // AuthProvider already hides children while loading (renders null)
+  if (!user) return <LoginPage />;
   return <>{children}</>;
 };
 
 function App() {
   return (
     <AuthProvider>
+      <ToastProvider>
       <GroupProvider>
         <BrowserRouter>
           <Routes>
@@ -31,6 +27,7 @@ function App() {
           </Routes>
         </BrowserRouter>
       </GroupProvider>
+      </ToastProvider>
     </AuthProvider>
   );
 }
