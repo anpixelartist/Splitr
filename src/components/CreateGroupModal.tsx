@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, Plus, Check, Users, CheckCircle2 } from 'lucide-react';
 import type { Contact } from '../types';
 
@@ -22,12 +22,13 @@ export const CreateGroupModal: React.FC<Props> = ({
   const [localContacts, setLocalContacts] = useState<Contact[]>(contacts);
   // brief success flash after adding someone
   const [addedName, setAddedName] = useState<string | null>(null);
-  const [addedTimer, setAddedTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const addedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (addedTimer.current) clearTimeout(addedTimer.current); }, []);
 
   const toggleContact = (id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
@@ -40,9 +41,9 @@ export const CreateGroupModal: React.FC<Props> = ({
     setSelectedIds(prev => new Set([...prev, contact.id]));
     setNewPersonName('');
     // Show "Name added" confirmation for 2 s
-    if (addedTimer) clearTimeout(addedTimer);
+    if (addedTimer.current) clearTimeout(addedTimer.current);
     setAddedName(name);
-    setAddedTimer(setTimeout(() => setAddedName(null), 2000));
+    addedTimer.current = setTimeout(() => setAddedName(null), 2000);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -72,6 +73,7 @@ export const CreateGroupModal: React.FC<Props> = ({
             type="button"
             onClick={onClose}
             className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500"
+            aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
@@ -113,6 +115,7 @@ export const CreateGroupModal: React.FC<Props> = ({
                   type="button"
                   onClick={handleAddPerson}
                   disabled={!newPersonName.trim()}
+                  aria-label="Add person"
                   className={`px-4 py-2.5 rounded-xl flex items-center gap-1 shrink-0 transition-all ${
                     addedName
                       ? 'bg-green-500 text-white scale-95'

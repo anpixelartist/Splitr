@@ -8,7 +8,7 @@ interface Props {
 }
 
 export const ProfileModal: React.FC<Props> = ({ onClose }) => {
-  const { userName, updateUserName, contacts, addContact, updateContact, removeContact, signInWithGoogle, signOut, isGoogleUser, user } = useAuth();
+  const { userName, updateUserName, contacts, addContact, updateContact, removeContact, signInWithGoogle, signOut, isGoogleUser, isLocalOnly, user } = useAuth();
 
   // Name editing
   const [editingName, setEditingName] = useState(false);
@@ -70,7 +70,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b shrink-0">
           <h2 className="text-lg font-bold text-gray-900">Profile</h2>
-          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500">
+          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500" aria-label="Close">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -113,6 +113,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
                     onClick={() => { setDraftName(userName); setEditingName(true); }}
                     className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg shrink-0"
                     title="Edit name"
+                    aria-label="Edit name"
                   >
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
@@ -146,15 +147,21 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
                   onClick={async () => { await signOut(); onClose(); }}
                   className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg shrink-0"
                   title="Sign out"
+                  aria-label="Sign out"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
+              </div>
+            ) : isLocalOnly ? (
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+                <p className="text-sm text-gray-600">Local-only mode — data is saved in <strong>this browser</strong>.</p>
+                <p className="text-xs text-gray-400 mt-0.5">Google sign-in and sharing need Firebase to be configured (see DEPLOYMENT.md).</p>
               </div>
             ) : (
               <div className="space-y-3">
                 <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
                   <p className="text-sm text-gray-600">Your data is saved on <strong>this device</strong> only.</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Sign in with Google to sync across all your devices.</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Sign in with Google to use it on all your devices — your groups come with you.</p>
                 </div>
                 {googleError && (
                   <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
@@ -167,9 +174,8 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
                     setGoogleLoading(true);
                     try {
                       await signInWithGoogle();
-                      showToast('Signed in with Google!');
                     } catch {
-                      setGoogleError('Google sign-in failed — Firebase needs to be configured with real API keys for this to work.');
+                      setGoogleError('Google sign-in failed. Please check your connection and try again.');
                     } finally {
                       setGoogleLoading(false);
                     }
@@ -295,6 +301,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
                               }}
                               className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg"
                               title="Rename"
+                              aria-label={`Rename ${contact.name}`}
                             >
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
@@ -302,6 +309,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
                               onClick={() => { setConfirmDeleteId(contact.id); setEditingContactId(null); }}
                               className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"
                               title="Delete"
+                              aria-label={`Delete ${contact.name}`}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>

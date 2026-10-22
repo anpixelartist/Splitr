@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run src",
+    "test:rules": "npx firebase-tools@15 emulators:exec --only firestore --project demo-splitr \"vitest run rules-tests\"",
+    "deploy": "npm run build && npx firebase-tools@15 deploy"
   },
   "dependencies": {
     "clsx": "^2.1.1",
@@ -20,6 +23,7 @@
     "uuid": "^14.0.2"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",

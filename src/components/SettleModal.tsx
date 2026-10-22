@@ -20,18 +20,23 @@ export const SettleModal: React.FC<Props> = ({
   onRecord,
   onClose,
 }) => {
-  const [selected, setSelected] = useState<boolean[]>(
-    pendingTransactions.map(() => true),
-  );
+  // Keyed by payer→payee (not list index) so a plan that changes while the
+  // modal is open can't shift checkmarks onto the wrong rows.
+  const keyOf = (t: SettlementTransaction) => `${t.from}->${t.to}`;
+  const [deselected, setDeselected] = useState<Set<string>>(new Set());
   const [recording, setRecording] = useState(false);
   const [done, setDone] = useState(false);
   const [recorded, setRecorded] = useState<SettlementTransaction[]>([]);
   const [sharing, setSharing] = useState(false);
 
-  const toggle = (i: number) =>
-    setSelected(prev => prev.map((v, idx) => (idx === i ? !v : v)));
+  const toggle = (key: string) =>
+    setDeselected(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
 
-  const selectedList = pendingTransactions.filter((_, i) => selected[i]);
+  const selectedList = pendingTransactions.filter(t => !deselected.has(keyOf(t)));
 
   const handleRecord = async () => {
     if (selectedList.length === 0) return;
@@ -105,6 +110,7 @@ export const SettleModal: React.FC<Props> = ({
               onClick={onClose}
               disabled={recording}
               className="p-2 rounded-full hover:bg-gray-100 disabled:opacity-40"
+              aria-label="Close"
             >
               <X className="w-6 h-6 text-gray-500" />
             </button>
@@ -112,15 +118,16 @@ export const SettleModal: React.FC<Props> = ({
 
           {/* Transaction list */}
           <div className="flex-1 overflow-y-auto p-4 space-y-2">
-            {pendingTransactions.map((t, i) => {
-              const isSelected = selected[i];
+            {pendingTransactions.map(t => {
+              const key = keyOf(t);
+              const isSelected = !deselected.has(key);
               const fromName = t.from === currentUserId ? 'You' : getUserName(t.from);
               const toName = t.to === currentUserId ? 'You' : getUserName(t.to);
               return (
                 <button
-                  key={i}
+                  key={key}
                   type="button"
-                  onClick={() => toggle(i)}
+                  onClick={() => toggle(key)}
                   disabled={recording}
                   className={`w-full flex items-center gap-3 p-4 rounded-xl border transition-colors text-left ${
                     isSelected ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200 hover:bg-gray-50'

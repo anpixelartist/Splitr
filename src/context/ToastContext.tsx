@@ -13,6 +13,7 @@ interface ToastCtx {
 }
 
 const ToastContext = createContext<ToastCtx>({ showToast: () => {} });
+// eslint-disable-next-line react/only-export-components
 export const useToast = () => useContext(ToastContext);
 
 let _id = 0;

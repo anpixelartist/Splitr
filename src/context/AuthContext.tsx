@@ -1,23 +1,28 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
   onAuthStateChanged, signInAnonymously,
-  signInWithPopup, GoogleAuthProvider,
+  signInWithPopup, signInWithRedirect, signInWithCredential,
+  linkWithPopup, linkWithRedirect, getRedirectResult,
+  GoogleAuthProvider,
   signOut as firebaseSignOut,
-  type User,
+  type User, type AuthError,
 } from 'firebase/auth';
-import { auth, db } from '../firebase/config';
-import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
+import { auth, db, isFirebaseConfigured } from '../firebase/config';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { v4 as uuidv4 } from 'uuid';
 import type { Contact } from '../types';
 
 // ─── Persistence key ──────────────────────────────────────────────────────────
-// 'google' | 'offline' | null (first time)
+// 'google' | 'offline' | 'signed-out' | null (first time)
 const AUTH_PREF_KEY = 'splitr_auth_choice';
+const MOCK_UID = 'mock-user-123';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   isGoogleUser: boolean;
+  /** true when running without Firebase: data never leaves this browser */
+  isLocalOnly: boolean;
   updateUserName: (name: string) => Promise<void>;
   userName: string;
   contacts: Contact[];
@@ -27,10 +32,11 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   continueOffline: () => Promise<void>;
+  authError: string | null;
 }
 
 const AuthContext = createContext<AuthContextType>({
-  user: null, loading: true, isGoogleUser: false,
+  user: null, loading: true, isGoogleUser: false, isLocalOnly: !isFirebaseConfigured,
   updateUserName: async () => {},
   userName: '', contacts: [],
   addContact: async () => ({ id: '', name: '' }),
@@ -39,8 +45,10 @@ const AuthContext = createContext<AuthContextType>({
   signInWithGoogle: async () => {},
   signOut: async () => {},
   continueOffline: async () => {},
+  authError: null,
 });
 
+// eslint-disable-next-line react/only-export-components
 export const useAuth = () => useContext(AuthContext);
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
@@ -51,18 +59,38 @@ const lsGetContacts = (uid: string): Contact[] => {
 };
 
 const lsSaveContacts = (uid: string, contacts: Contact[]) => {
-  try { localStorage.setItem(lsContactsKey(uid), JSON.stringify(contacts)); } catch {}
+  try { localStorage.setItem(lsContactsKey(uid), JSON.stringify(contacts)); } catch { /* storage full / blocked */ }
 };
 
-const hasExistingLocalData = () =>
-  Object.keys(localStorage).some(k => k.startsWith('splitr_') && k !== AUTH_PREF_KEY);
+const lsGetPref = () => { try { return localStorage.getItem(AUTH_PREF_KEY); } catch { return null; } };
+const lsSetPref = (v: string) => { try { localStorage.setItem(AUTH_PREF_KEY, v); } catch { /* ignore */ } };
+
+const hasExistingLocalData = () => {
+  try {
+    return Object.keys(localStorage).some(k => k.startsWith('splitr_') && k !== AUTH_PREF_KEY);
+  } catch { return false; }
+};
+
+const isDefaultName = (name: string) => !name || name === 'You' || /^User [\w-]{4}$/.test(name);
+
+// Popups are blocked in some mobile browsers / installed PWAs — fall back to a
+// full-page redirect there. The result is picked up by getRedirectResult on load.
+const shouldFallBackToRedirect = (err: unknown) => {
+  const code = (err as AuthError)?.code;
+  return code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment';
+};
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState('');
+  const userNameRef = useRef('');
+  useEffect(() => { userNameRef.current = userName; }, [userName]);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [authError, setAuthError] = useState<string | null>(null);
+  // Linking mutates the same User object in place, so bump this to re-render.
+  const [, setAuthTick] = useState(0);
 
   const isGoogleUser = !!(user && !user.isAnonymous && user.providerData?.length > 0);
 
@@ -75,7 +103,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setContacts(snap.data().contacts || lsGetContacts(u.uid));
       } else {
         const defaultName = u.displayName || `User ${u.uid.substring(0, 4)}`;
-        await setDoc(doc(db, 'users', u.uid), { name: defaultName, contacts: [] });
+        // Don't await: offline writes only resolve once the server acknowledges them
+        setDoc(doc(db, 'users', u.uid), { name: defaultName, contacts: lsGetContacts(u.uid) }, { merge: true })
+          .catch(() => {});
         setUserName(defaultName);
         setContacts(lsGetContacts(u.uid));
       }
@@ -85,45 +115,89 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const useMockUser = () => {
-    const mockUser = { uid: 'mock-user-123', isAnonymous: true, providerData: [] } as unknown as User;
+  const startMockSession = () => {
+    const mockUser = { uid: MOCK_UID, isAnonymous: true, providerData: [] } as unknown as User;
     setUser(mockUser);
     setUserName(localStorage.getItem('splitr_display_name') || 'You');
-    setContacts(lsGetContacts('mock-user-123'));
+    setContacts(lsGetContacts(MOCK_UID));
     setLoading(false);
   };
 
+  // After a Google account is linked to the anonymous one, adopt the Google name
+  // unless the user already picked their own.
+  const adoptGoogleProfile = (u: User) => {
+    lsSetPref('google');
+    setAuthTick(t => t + 1);
+    setUser(u);
+    // A linked anonymous account has no top-level displayName; the Google
+    // name lives on the provider entry.
+    const googleName = u.displayName
+      || u.providerData.find(p => p.providerId === GoogleAuthProvider.PROVIDER_ID)?.displayName;
+    if (googleName && isDefaultName(userNameRef.current)) {
+      setUserName(googleName);
+      setDoc(doc(db, 'users', u.uid), { name: googleName }, { merge: true }).catch(() => {});
+    }
+  };
+
+  const handleLinkConflict = async (err: unknown) => {
+    const credential = GoogleAuthProvider.credentialFromError(err as AuthError);
+    if (!credential) throw err;
+    const ok = window.confirm(
+      'This Google account already has Splitr data.\n\n' +
+      'Switch to it? Groups you created without an account on this device will stay with the old offline profile.',
+    );
+    if (!ok) return;
+    await signInWithCredential(auth, credential);
+  };
+
   useEffect(() => {
+    if (!isFirebaseConfigured) {
+      // Local-only mode: never touch the network.
+      if (lsGetPref() === 'offline' || hasExistingLocalData()) startMockSession();
+      else setLoading(false);
+      return;
+    }
+
+    // Finish a redirect-based sign-in / link (mobile popup fallback)
+    getRedirectResult(auth)
+      .then(result => { if (result?.user) adoptGoogleProfile(result.user); })
+      .catch(err => {
+        if ((err as AuthError)?.code === 'auth/credential-already-in-use') {
+          handleLinkConflict(err).catch(() => setAuthError('Google sign-in failed. Please try again.'));
+        } else if (err) {
+          setAuthError('Google sign-in failed. Please try again.');
+        }
+      });
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         setUser(firebaseUser);
-        if (!firebaseUser.isAnonymous) {
-          localStorage.setItem(AUTH_PREF_KEY, 'google');
-        } else if (!localStorage.getItem(AUTH_PREF_KEY)) {
-          localStorage.setItem(AUTH_PREF_KEY, 'offline');
-        }
+        if (!firebaseUser.isAnonymous) lsSetPref('google');
+        else if (lsGetPref() !== 'google') lsSetPref('offline');
         await loadProfile(firebaseUser);
         setLoading(false);
-      } else {
-        // No Firebase user — decide what to do
-        const pref = localStorage.getItem(AUTH_PREF_KEY);
-        const hasData = hasExistingLocalData();
+        return;
+      }
 
-        if (!pref && !hasData) {
-          // Genuinely first time — show the login page
-          setLoading(false);
-          return;
-        }
+      // No Firebase user — decide what to do
+      setUser(null);
+      setUserName('');
+      setContacts([]);
+      const pref = lsGetPref();
 
-        // Returning user or has existing data — auto sign-in offline/anonymous
-        try {
-          await signInAnonymously(auth);
-          // onAuthStateChanged will re-fire with the anonymous user
-        } catch {
-          // Mock keys — use stable mock identity
-          if (!pref) localStorage.setItem(AUTH_PREF_KEY, 'offline');
-          useMockUser();
-        }
+      // First visit, or the user explicitly signed out → show the login page.
+      // (Legacy installs without a pref but with data resume offline.)
+      if (pref === 'signed-out' || pref === 'google' || (!pref && !hasExistingLocalData())) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        await signInAnonymously(auth);
+        // onAuthStateChanged will re-fire with the anonymous user
+      } catch {
+        setAuthError('Could not start a session. Check your internet connection — it is needed the first time.');
+        setLoading(false);
       }
     });
     return unsubscribe;
@@ -132,28 +206,65 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // ── Auth actions ──────────────────────────────────────────────────────────
 
   const signInWithGoogle = async () => {
+    if (!isFirebaseConfigured) throw new Error('Firebase is not configured');
+    setAuthError(null);
     const provider = new GoogleAuthProvider();
-    // signInWithPopup throws if Firebase isn't configured — let the caller handle it
-    await signInWithPopup(auth, provider);
-    // onAuthStateChanged fires → sets user automatically
+    provider.setCustomParameters({ prompt: 'select_account' });
+    const current = auth.currentUser;
+
+    try {
+      if (current?.isAnonymous) {
+        // Upgrade the anonymous account in place: same UID, so every group,
+        // expense and contact created offline stays with the user.
+        try {
+          const result = await linkWithPopup(current, provider);
+          adoptGoogleProfile(result.user);
+        } catch (err) {
+          if ((err as AuthError)?.code === 'auth/credential-already-in-use') {
+            await handleLinkConflict(err);
+          } else if (shouldFallBackToRedirect(err)) {
+            await linkWithRedirect(current, provider);
+          } else {
+            throw err;
+          }
+        }
+      } else {
+        try {
+          await signInWithPopup(auth, provider);
+        } catch (err) {
+          if (shouldFallBackToRedirect(err)) await signInWithRedirect(auth, provider);
+          else throw err;
+        }
+      }
+    } catch (err) {
+      // The user closing the popup isn't an error worth showing
+      if ((err as AuthError)?.code === 'auth/popup-closed-by-user'
+        || (err as AuthError)?.code === 'auth/cancelled-popup-request') return;
+      throw err;
+    }
   };
 
   const signOut = async () => {
-    try { await firebaseSignOut(auth); } catch {}
-    localStorage.removeItem(AUTH_PREF_KEY);
-    setUser(null);
-    setUserName('');
-    setContacts([]);
-    // loading stays false — App will show LoginPage (user is null)
+    lsSetPref('signed-out');
+    if (user?.uid === MOCK_UID) {
+      setUser(null);
+      setUserName('');
+      setContacts([]);
+      return;
+    }
+    try { await firebaseSignOut(auth); } catch { /* already signed out */ }
+    // onAuthStateChanged(null) clears state and shows the login page
   };
 
   const continueOffline = async () => {
-    localStorage.setItem(AUTH_PREF_KEY, 'offline');
+    lsSetPref('offline');
+    setAuthError(null);
+    if (!isFirebaseConfigured) { startMockSession(); return; }
     try {
       await signInAnonymously(auth);
       // onAuthStateChanged fires → sets user
     } catch {
-      useMockUser();
+      setAuthError('Could not start a session. Check your internet connection — it is needed the first time.');
     }
   };
 
@@ -163,52 +274,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const trimmed = name.trim();
     if (!user || !trimmed) return;
     setUserName(trimmed);
-    if (user.uid === 'mock-user-123') {
+    if (user.uid === MOCK_UID) {
       localStorage.setItem('splitr_display_name', trimmed);
       return;
     }
-    try {
-      await setDoc(doc(db, 'users', user.uid), { name: trimmed }, { merge: true });
-    } catch {}
+    setDoc(doc(db, 'users', user.uid), { name: trimmed }, { merge: true }).catch(() => {});
+  };
+
+  const saveContacts = (updated: Contact[]) => {
+    setContacts(updated);
+    if (!user) return;
+    lsSaveContacts(user.uid, updated);
+    if (user.uid !== MOCK_UID) {
+      setDoc(doc(db, 'users', user.uid), { contacts: updated }, { merge: true }).catch(() => {});
+    }
   };
 
   const addContact = async (name: string): Promise<Contact> => {
     const contact: Contact = { id: uuidv4(), name: name.trim() };
-    const updated = [...contacts, contact];
-    setContacts(updated);
-    if (user) {
-      lsSaveContacts(user.uid, updated);
-      try { await updateDoc(doc(db, 'users', user.uid), { contacts: updated }); } catch {}
-    }
+    saveContacts([...contacts, contact]);
     return contact;
   };
 
   const updateContact = async (id: string, name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    const updated = contacts.map(c => c.id === id ? { ...c, name: trimmed } : c);
-    setContacts(updated);
-    if (user) {
-      lsSaveContacts(user.uid, updated);
-      try { await updateDoc(doc(db, 'users', user.uid), { contacts: updated }); } catch {}
-    }
+    saveContacts(contacts.map(c => c.id === id ? { ...c, name: trimmed } : c));
   };
 
   const removeContact = async (id: string) => {
-    const updated = contacts.filter(c => c.id !== id);
-    setContacts(updated);
-    if (user) {
-      lsSaveContacts(user.uid, updated);
-      try { await updateDoc(doc(db, 'users', user.uid), { contacts: updated }); } catch {}
-    }
+    saveContacts(contacts.filter(c => c.id !== id));
   };
 
   return (
     <AuthContext.Provider value={{
-      user, loading, isGoogleUser,
+      user, loading, isGoogleUser, isLocalOnly: !isFirebaseConfigured,
       updateUserName, userName,
       contacts, addContact, updateContact, removeContact,
-      signInWithGoogle, signOut, continueOffline,
+      signInWithGoogle, signOut, continueOffline, authError,
     }}>
       {!loading && children}
     </AuthContext.Provider>

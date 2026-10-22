@@ -37,7 +37,9 @@ export function calculateBalances(
 }
 
 /**
- * Generates the minimum number of transactions to settle all debts.
+ * Generates a short list of transactions that settles all debts.
+ * Greedy (largest debtor pays largest creditor): at most n-1 transactions,
+ * usually optimal for small groups, but not guaranteed to be the true minimum.
  */
 export function calculateSettlements(balances: Record<string, Balance>): SettlementTransaction[] {
   const debtors: { userId: string; amount: number }[] = [];
@@ -81,3 +83,22 @@ export function calculateSettlements(balances: Record<string, Balance>): Settlem
 
   return transactions;
 }
+
+/**
+ * Splits `total` equally between `userIds`, exact to the cent. Leftover cents
+ * go one each to the first people in the list, so the shares always add up
+ * to exactly `total` (e.g. 100 / 3 -> 33.34, 33.33, 33.33).
+ */
+export function splitEqually(total: number, userIds: string[]): { userId: string; amount: number }[] {
+  if (userIds.length === 0) return [];
+  const totalCents = Math.round(total * 100);
+  const base = Math.floor(totalCents / userIds.length);
+  const remainder = totalCents - base * userIds.length;
+  return userIds.map((userId, i) => ({
+    userId,
+    amount: (base + (i < remainder ? 1 : 0)) / 100,
+  }));
+}
+
+/** Rounds a money amount to whole cents. */
+export const roundToCents = (n: number) => Math.round(n * 100) / 100;

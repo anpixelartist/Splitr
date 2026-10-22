@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useGroup } from '../context/GroupContext';
 import { useAuth } from '../context/AuthContext';
 import { X, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { splitEqually } from '../lib/settlement';
 
 interface Props {
   onClose: () => void;
@@ -17,9 +18,9 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
   const [paidBy, setPaidBy] = useState(user?.uid || '');
   const [splitMethod, setSplitMethod] = useState<'equal' | 'exact'>('equal');
   const [exactSplits, setExactSplits] = useState<Record<string, string>>({});
-  const [includedUsers, setIncludedUsers] = useState<Record<string, boolean>>(
-    users.reduce((acc, u) => ({ ...acc, [u.id]: true }), {}),
-  );
+  // Track who was unticked (not who is ticked) so members who join while the
+  // modal is open are included by default.
+  const [excludedUsers, setExcludedUsers] = useState<Set<string>>(new Set());
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -32,7 +33,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
     if (!currentGroup || !user) return;
 
     // ── Validation ──────────────────────────────────────────────────────────
-    const totalAmount = parseFloat(amount);
+    const totalAmount = Math.round(parseFloat(amount) * 100) / 100;
     if (!description.trim()) {
       setError('Please enter a description.');
       return;
@@ -45,31 +46,32 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
     const splits: { userId: string; amount: number }[] = [];
 
     if (splitMethod === 'equal') {
-      const active = Object.keys(includedUsers).filter(id => includedUsers[id]);
+      const active = users.map(u => u.id).filter(id => !excludedUsers.has(id));
       if (active.length === 0) {
         setError('Select at least one person to split with.');
         return;
       }
-      const share = Math.round((totalAmount / active.length) * 100) / 100;
-      let sum = 0;
-      active.forEach((uid, i) => {
-        const amt = i === active.length - 1 ? totalAmount - sum : share;
-        splits.push({ userId: uid, amount: amt });
-        sum += share;
-      });
+      splits.push(...splitEqually(totalAmount, active));
     } else {
-      let sum = 0;
+      // Compare in whole cents to avoid floating-point drift
+      let sumCents = 0;
       for (const uid of users.map(u => u.id)) {
         const val = parseFloat(exactSplits[uid] || '0');
-        if (val > 0) { splits.push({ userId: uid, amount: val }); sum += val; }
+        if (isNaN(val) || val < 0) {
+          setError('Amounts can\'t be negative.');
+          return;
+        }
+        const cents = Math.round(val * 100);
+        if (cents > 0) { splits.push({ userId: uid, amount: cents / 100 }); sumCents += cents; }
       }
       if (splits.length === 0) {
         setError('Enter at least one amount.');
         return;
       }
-      if (Math.abs(sum - totalAmount) > 0.01) {
+      const totalCents = Math.round(totalAmount * 100);
+      if (sumCents !== totalCents) {
         setError(
-          `Amounts don't add up — off by $${Math.abs(sum - totalAmount).toFixed(2)}. Total must equal $${totalAmount.toFixed(2)}.`,
+          `Amounts don't add up — off by $${(Math.abs(sumCents - totalCents) / 100).toFixed(2)}. Total must equal $${totalAmount.toFixed(2)}.`,
         );
         return;
       }
@@ -78,7 +80,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
     // ── Save ────────────────────────────────────────────────────────────────
     setSaving(true);
     try {
-      await addExpense({ groupId: currentGroup.id, description, amount: totalAmount, paidBy, splits });
+      await addExpense({ groupId: currentGroup.id, description: description.trim(), amount: totalAmount, paidBy, splits });
       setSaved(true);
       // Close after the animation plays
       setTimeout(onClose, 1150);
@@ -108,7 +110,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
         {/* ── Header ──────────────────────────────────────────────────────── */}
         <div className="p-4 border-b flex justify-between items-center sticky top-0 bg-white rounded-t-2xl z-10">
           <h2 className="text-xl font-bold">Add Expense</h2>
-          <button onClick={onClose} disabled={saving} className="p-2 rounded-full hover:bg-gray-100 disabled:opacity-40">
+          <button onClick={onClose} disabled={saving} className="p-2 rounded-full hover:bg-gray-100 disabled:opacity-40" aria-label="Close">
             <X className="w-6 h-6 text-gray-500" />
           </button>
         </div>
@@ -195,9 +197,14 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
                       <input
                         type="checkbox"
                         className="w-5 h-5 rounded text-blue-600 focus:ring-blue-500"
-                        checked={includedUsers[u.id] || false}
+                        checked={!excludedUsers.has(u.id)}
                         onChange={e => {
-                          setIncludedUsers(prev => ({ ...prev, [u.id]: e.target.checked }));
+                          const checked = e.target.checked;
+                          setExcludedUsers(prev => {
+                            const next = new Set(prev);
+                            if (checked) next.delete(u.id); else next.add(u.id);
+                            return next;
+                          });
                           setError(null);
                         }}
                         disabled={saving}

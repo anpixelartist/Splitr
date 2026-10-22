@@ -3,7 +3,7 @@ import { Wallet, WifiOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export const LoginPage: React.FC = () => {
-  const { signInWithGoogle, continueOffline } = useAuth();
+  const { signInWithGoogle, continueOffline, authError, isLocalOnly } = useAuth();
   const [googleLoading, setGoogleLoading] = useState(false);
   const [offlineLoading, setOfflineLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -15,7 +15,7 @@ export const LoginPage: React.FC = () => {
       await signInWithGoogle();
       // onAuthStateChanged will update the user → App re-renders to Home
     } catch {
-      setError('Google sign-in failed. This usually means Firebase isn\'t configured yet. Continue offline to use the app on this device.');
+      setError('Google sign-in failed. Please try again, or continue without an account.');
     } finally {
       setGoogleLoading(false);
     }
@@ -25,8 +25,11 @@ export const LoginPage: React.FC = () => {
     setError(null);
     setOfflineLoading(true);
     await continueOffline();
-    // App will re-render once user is set
+    // App re-renders once the user is set; on failure authError is shown
+    setOfflineLoading(false);
   };
+
+  const shownError = error ?? authError;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-6">
@@ -45,13 +48,14 @@ export const LoginPage: React.FC = () => {
         <div className="bg-white rounded-2xl shadow-xl p-6 space-y-4">
 
           {/* Error */}
-          {error && (
+          {shownError && (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
-              {error}
+              {shownError}
             </div>
           )}
 
-          {/* Google sign-in */}
+          {/* Google sign-in (needs Firebase) */}
+          {!isLocalOnly && <>
           <button
             onClick={handleGoogle}
             disabled={googleLoading || offlineLoading}
@@ -76,6 +80,7 @@ export const LoginPage: React.FC = () => {
             <span className="text-xs text-gray-400 shrink-0">or</span>
             <div className="flex-1 h-px bg-gray-200" />
           </div>
+          </>}
 
           {/* Offline / anonymous */}
           <button
@@ -94,8 +99,12 @@ export const LoginPage: React.FC = () => {
 
         {/* Footer note */}
         <p className="text-center text-xs text-gray-400 mt-6">
-          Offline mode saves your data on this device only.
-          <br />Google sign-in syncs across all your devices.
+          {isLocalOnly ? (
+            <>Running in local-only mode: data stays in this browser.</>
+          ) : (
+            <>Without an account, your data lives on this device only.
+            <br />Sign in with Google to use Splitr on all your devices.</>
+          )}
         </p>
       </div>
     </div>
