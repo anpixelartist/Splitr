@@ -7,7 +7,7 @@ import {
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
 import {
-  arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, query,
+  arrayUnion, collection, deleteDoc, deleteField, doc, getDoc, getDocs, query,
   setDoc, updateDoc, where, writeBatch, type Firestore,
 } from 'firebase/firestore';
 
@@ -159,6 +159,51 @@ describe('groups', () => {
       await setDoc(doc(ctx.firestore(), 'groups', 'SOLO23'), { ...baseGroup, id: 'SOLO23', members: ['bob'], admins: ['alice'] });
     });
     await assertSucceeds(deleteDoc(doc(as('bob'), 'groups', 'SOLO23')));
+  });
+});
+
+describe('claiming a name-only placeholder', () => {
+  const seedClaims = (claims: Record<string, string>) => env.withSecurityRulesDisabled(async ctx => {
+    await updateDoc(doc(ctx.firestore(), 'groups', GID), { claims, participants: [
+      { id: 'p1', name: 'Carol' }, { id: 'p2', name: 'Erin' },
+    ] });
+  });
+
+  it('lets a joiner claim a placeholder as themselves', async () => {
+    await assertSucceeds(updateDoc(doc(as('dave'), 'groups', GID), {
+      members: arrayUnion('dave'), 'memberNames.dave': 'Carol', 'claims.p1': 'dave',
+    }));
+  });
+
+  it('does not let anyone claim on behalf of someone else', async () => {
+    await assertFails(updateDoc(doc(as('dave'), 'groups', GID), {
+      members: arrayUnion('dave'), 'claims.p1': 'bob',
+    }));
+    await assertFails(updateDoc(doc(as('bob'), 'groups', GID), { 'claims.p1': 'alice' }));
+  });
+
+  it('lets a member who joined as a duplicate claim later', async () => {
+    await assertSucceeds(updateDoc(doc(as('bob'), 'groups', GID), { 'claims.p1': 'bob' }));
+  });
+
+  it('never takes over a placeholder someone already claimed', async () => {
+    await seedClaims({ p1: 'alice' });
+    await assertFails(updateDoc(doc(as('bob'), 'groups', GID), { 'claims.p1': 'bob' }));
+  });
+
+  it('allows one claim per member', async () => {
+    await seedClaims({ p1: 'bob' });
+    await assertFails(updateDoc(doc(as('bob'), 'groups', GID), { 'claims.p2': 'bob' }));
+  });
+
+  it('cannot claim another member\'s account', async () => {
+    await assertFails(updateDoc(doc(as('bob'), 'groups', GID), { 'claims.alice': 'bob' }));
+  });
+
+  it('only admins can undo a claim', async () => {
+    await seedClaims({ p1: 'bob' });
+    await assertFails(updateDoc(doc(as('bob'), 'groups', GID), { 'claims.p1': deleteField() }));
+    await assertSucceeds(updateDoc(doc(as('alice'), 'groups', GID), { 'claims.p1': deleteField() }));
   });
 });
 
