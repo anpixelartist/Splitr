@@ -184,7 +184,7 @@ export const GroupDetails: React.FC = () => {
     return (
       <div className="max-w-md mx-auto min-h-screen flex flex-col items-center justify-center p-8 text-center">
         <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mb-4">
-          <UserPlus className="w-8 h-8 text-blue-600" />
+          <UserPlus className="w-8 h-8 text-blue-600 dark:text-blue-400" />
         </div>
         <p className="text-sm text-gray-500 mb-1">You've been invited to</p>
         <h1 className="text-2xl font-bold text-gray-900 mb-1">{currentGroup.name}</h1>
@@ -209,7 +209,7 @@ export const GroupDetails: React.FC = () => {
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-gray-50 flex flex-col relative">
-      <header className="bg-white border-b sticky top-0 z-10">
+      <header className="bg-surface border-b sticky top-0 z-10">
         <div className="p-4 flex items-center justify-between">
           <button onClick={() => navigate('/')} className="p-2 -ml-2 rounded-full hover:bg-gray-100" aria-label="Back">
             <ArrowLeft className="w-6 h-6 text-gray-700" />
@@ -222,7 +222,7 @@ export const GroupDetails: React.FC = () => {
             </p>
           </div>
           <div className="flex items-center gap-1 -mr-1">
-            <button onClick={handleShare} className="p-2 rounded-full hover:bg-gray-100 text-blue-600" aria-label="Invite people">
+            <button onClick={handleShare} className="p-2 rounded-full hover:bg-gray-100 text-blue-600 dark:text-blue-400" aria-label="Invite people">
               <Share2 className="w-5 h-5" />
             </button>
             <button
@@ -239,7 +239,7 @@ export const GroupDetails: React.FC = () => {
             <button
               key={tab}
               className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors capitalize ${
-                activeTab === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500'
+                activeTab === tab ? 'border-blue-600 text-blue-600 dark:text-blue-400' : 'border-transparent text-gray-500'
               }`}
               onClick={() => setActiveTab(tab)}
             >
@@ -263,8 +263,8 @@ export const GroupDetails: React.FC = () => {
                   <CheckCircle2 className="w-6 h-6 text-white" strokeWidth={2.5} />
                 </div>
                 <div className="z-10">
-                  <p className="font-bold text-green-800 text-base leading-tight">All Settled Up!</p>
-                  <p className="text-xs text-green-600 mt-0.5">
+                  <p className="font-bold text-green-800 dark:text-green-300 text-base leading-tight">All Settled Up!</p>
+                  <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
                     {settlementRecords.length} payment{settlementRecords.length !== 1 ? 's' : ''} recorded
                     {' · '}{new Date(settlementRecords[0].createdAt).toLocaleDateString()}
                   </p>
@@ -293,7 +293,7 @@ export const GroupDetails: React.FC = () => {
                         ? 'border-red-300 bg-red-50'
                         : expSettled
                         ? 'bg-green-50/50 border-green-200 border-l-4 border-l-green-400'
-                        : 'bg-white'
+                        : 'bg-surface'
                     }`}
                   >
                     <div className="flex justify-between items-start mb-1">
@@ -343,7 +343,7 @@ export const GroupDetails: React.FC = () => {
                     {expSettled && !isConfirming && (
                       <div className="flex items-center gap-1 mt-2 pt-2 border-t border-green-100">
                         <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
-                        <span className="text-xs font-semibold text-green-600">Settled</span>
+                        <span className="text-xs font-semibold text-green-600 dark:text-green-400">Settled</span>
                       </div>
                     )}
                   </div>
@@ -363,7 +363,7 @@ export const GroupDetails: React.FC = () => {
                     <p className="text-sm text-gray-600 mb-1">
                       {myBalance > 0 ? 'You are owed' : myBalance < 0 ? 'You owe' : 'You are settled up'}
                     </p>
-                    <p className={`text-3xl font-bold ${myBalance > 0 ? 'text-green-700' : myBalance < 0 ? 'text-red-700' : 'text-gray-700'}`}>
+                    <p className={`text-3xl font-bold ${myBalance > 0 ? 'text-green-700 dark:text-green-300' : myBalance < 0 ? 'text-red-700 dark:text-red-300' : 'text-gray-700'}`}>
                       ${Math.abs(myBalance).toFixed(2)}
                     </p>
                   </div>
@@ -378,7 +378,7 @@ export const GroupDetails: React.FC = () => {
                 {settlementPlan.length > 0 && (
                   <button
                     onClick={() => setIsSettleOpen(true)}
-                    className="text-sm font-semibold text-green-700 bg-green-100 hover:bg-green-200 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
+                    className="text-sm font-semibold text-green-700 dark:text-green-300 bg-green-100 hover:bg-green-200 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
                   >
                     <CheckCircle2 className="w-4 h-4" />
                     Settle Up
@@ -391,11 +391,11 @@ export const GroupDetails: React.FC = () => {
                     <div className="anim-pop-in w-10 h-10 bg-green-500 rounded-full flex items-center justify-center mx-auto mb-2 shadow-md shadow-green-200">
                       <CheckCircle2 className="w-5 h-5 text-white" strokeWidth={2.5} />
                     </div>
-                    <p className="font-semibold text-green-800">All settled up!</p>
-                    <p className="text-xs text-green-600 mt-0.5">Every expense has been paid off</p>
+                    <p className="font-semibold text-green-800 dark:text-green-300">All settled up!</p>
+                    <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">Every expense has been paid off</p>
                   </div>
                 ) : (
-                  <div className="bg-white p-5 rounded-xl border text-center shadow-sm">
+                  <div className="bg-surface p-5 rounded-xl border text-center shadow-sm">
                     <p className="font-medium text-gray-600">No pending payments</p>
                     <p className="text-xs text-gray-400 mt-1">
                       {expenses.length === 0
@@ -407,7 +407,7 @@ export const GroupDetails: React.FC = () => {
               ) : (
                 <div className="space-y-2">
                   {settlementPlan.map(s => (
-                    <div key={`${s.from}-${s.to}`} className="bg-white p-4 rounded-xl border shadow-sm flex items-center justify-between">
+                    <div key={`${s.from}-${s.to}`} className="bg-surface p-4 rounded-xl border shadow-sm flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center font-bold text-gray-600 text-xs">
                           {getUserName(s.from).charAt(0)}
@@ -449,11 +449,11 @@ export const GroupDetails: React.FC = () => {
                     {(showAllHistory ? settlementRecords : settlementRecords.slice(0, 5)).map(r => (
                       <div
                         key={r.id}
-                        className="bg-white p-4 rounded-xl border border-green-100 shadow-sm flex items-center justify-between opacity-70"
+                        className="bg-surface p-4 rounded-xl border border-green-100 shadow-sm flex items-center justify-between opacity-70"
                       >
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center shrink-0">
-                            <CheckCircle2 className="w-4 h-4 text-green-600" />
+                            <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
                           </div>
                           <div className="text-sm">
                             <span className="line-through text-gray-500 font-semibold">
@@ -475,7 +475,7 @@ export const GroupDetails: React.FC = () => {
                     {settlementRecords.length > 5 && !showAllHistory && (
                       <button
                         onClick={() => setShowAllHistory(true)}
-                        className="w-full py-2.5 text-sm text-blue-600 hover:text-blue-700 font-medium bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors"
+                        className="w-full py-2.5 text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors"
                       >
                         Show all {settlementRecords.length} payments
                       </button>
@@ -488,7 +488,7 @@ export const GroupDetails: React.FC = () => {
             {/* Group Members */}
             <section>
               <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Group Members</h3>
-              <div className="bg-white rounded-xl border shadow-sm overflow-hidden divide-y">
+              <div className="bg-surface rounded-xl border shadow-sm overflow-hidden divide-y">
                 {groupUsers.map(u => {
                   const memberIsAdmin = isMemberAdmin(u.id);
                   const memberIsFirebase = isFirebaseMember(u.id);
@@ -498,7 +498,7 @@ export const GroupDetails: React.FC = () => {
 
                   return (
                     <div key={u.id} className="p-3 flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-sm shrink-0">
+                      <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 dark:text-blue-300 flex items-center justify-center font-bold text-sm shrink-0">
                         {u.name.charAt(0).toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
@@ -517,7 +517,7 @@ export const GroupDetails: React.FC = () => {
                         </div>
                         <p className="text-xs text-gray-400 mt-0.5">
                           {bal === 0 ? 'Settled' : (
-                            <span className={bal > 0 ? 'text-green-600' : 'text-red-600'}>
+                            <span className={bal > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
                               {bal > 0 ? '+' : '-'}${Math.abs(bal).toFixed(2)}
                             </span>
                           )}
@@ -537,7 +537,7 @@ export const GroupDetails: React.FC = () => {
                           disabled={memberIsAdmin && isLastAdmin}
                           className={`text-xs px-2.5 py-1.5 rounded-lg border transition-colors shrink-0 ${
                             memberIsAdmin
-                              ? 'border-amber-200 text-amber-600 hover:bg-amber-50 disabled:opacity-40'
+                              ? 'border-amber-200 text-amber-600 dark:text-amber-400 hover:bg-amber-50 disabled:opacity-40'
                               : 'border-gray-200 text-gray-500 hover:bg-gray-50'
                           }`}
                           title={memberIsAdmin && isLastAdmin ? "Can't remove the last admin" : undefined}
@@ -571,7 +571,7 @@ export const GroupDetails: React.FC = () => {
           onClick={() => setShowGroupMenu(false)}
         >
           <div
-            className="bg-white w-full max-w-md mx-auto rounded-t-2xl overflow-hidden"
+            className="bg-surface w-full max-w-md mx-auto rounded-t-2xl overflow-hidden"
             onClick={e => e.stopPropagation()}
           >
             <div className="px-4 pt-4 pb-1">
@@ -598,7 +598,7 @@ export const GroupDetails: React.FC = () => {
                 >
                   <Trash2 className="w-5 h-5 text-red-500" />
                   <div>
-                    <p className="font-medium text-red-600">Delete Group</p>
+                    <p className="font-medium text-red-600 dark:text-red-400">Delete Group</p>
                     <p className="text-xs text-red-400">Permanently deletes all expenses · cannot be undone</p>
                   </div>
                 </button>

@@ -45,11 +45,11 @@ export const LoginPage: React.FC = () => {
         </div>
 
         {/* Card */}
-        <div className="bg-white rounded-2xl shadow-xl p-6 space-y-4">
+        <div className="bg-surface rounded-2xl shadow-xl p-6 space-y-4">
 
           {/* Error */}
           {shownError && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 dark:text-amber-300">
               {shownError}
             </div>
           )}
@@ -59,7 +59,7 @@ export const LoginPage: React.FC = () => {
           <button
             onClick={handleGoogle}
             disabled={googleLoading || offlineLoading}
-            className="w-full flex items-center justify-center gap-3 bg-white border-2 border-gray-200 hover:border-blue-400 hover:bg-blue-50 text-gray-800 font-semibold py-3.5 rounded-xl transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-3 bg-surface border-2 border-gray-200 hover:border-blue-400 hover:bg-blue-50 text-gray-800 font-semibold py-3.5 rounded-xl transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {googleLoading ? (
               <span className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />

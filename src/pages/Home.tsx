@@ -66,7 +66,7 @@ export const Home: React.FC = () => {
       {/* ── Header ── */}
       <header className="flex items-center justify-between py-4">
         <div className="flex items-center gap-2">
-          <Wallet className="w-8 h-8 text-blue-600" />
+          <Wallet className="w-8 h-8 text-blue-600 dark:text-blue-400" />
           <h1 className="text-2xl font-bold text-gray-900">Splitr</h1>
         </div>
 
@@ -77,7 +77,7 @@ export const Home: React.FC = () => {
           title="Profile & contacts"
           aria-label="Profile & contacts"
         >
-          <div className="w-9 h-9 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold text-sm select-none">
+          <div className="w-9 h-9 bg-blue-100 text-blue-700 dark:text-blue-300 rounded-full flex items-center justify-center font-bold text-sm select-none">
             {userName.charAt(0).toUpperCase()}
           </div>
           <span className="text-sm font-medium text-gray-700 hidden sm:block">{userName}</span>
@@ -85,7 +85,7 @@ export const Home: React.FC = () => {
       </header>
 
       {isLocalOnly && (
-        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
+        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 dark:text-amber-300">
           <HardDrive className="w-4 h-4 shrink-0 mt-0.5" />
           <p>Local-only mode: data is saved in this browser and can't be shared with other devices.</p>
         </div>
@@ -93,7 +93,7 @@ export const Home: React.FC = () => {
 
       {/* ── Actions ── */}
       <section className="space-y-4">
-        <div className="bg-white p-6 rounded-xl shadow-sm border">
+        <div className="bg-surface p-6 rounded-xl shadow-sm border">
           <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
             <PlusCircle className="w-5 h-5 text-blue-500" />
             Create a New Group
@@ -106,7 +106,7 @@ export const Home: React.FC = () => {
           </button>
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow-sm border">
+        <div className="bg-surface p-6 rounded-xl shadow-sm border">
           <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
             <UserPlus className="w-5 h-5 text-green-500" />
             Join a Group
@@ -148,7 +148,7 @@ export const Home: React.FC = () => {
               <button
                 key={group.id}
                 onClick={() => navigate(`/group/${group.id}`)}
-                className="w-full text-left bg-white p-4 rounded-xl border shadow-sm flex justify-between items-center cursor-pointer hover:border-blue-300 transition-colors"
+                className="w-full text-left bg-surface p-4 rounded-xl border shadow-sm flex justify-between items-center cursor-pointer hover:border-blue-300 transition-colors"
               >
                 <div>
                   <h3 className="font-semibold text-lg">{group.name}</h3>
