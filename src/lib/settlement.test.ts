@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateBalances, calculateSettlements, splitEqually } from './settlement';
+import { calculateBalances, calculateSettlements, splitEqually, validateExpense } from './settlement';
 import type { Expense, SettlementRecord } from '../types';
 
 describe('Financial Logic', () => {
@@ -130,5 +130,75 @@ describe('splitEqually', () => {
 
   it('returns nothing for an empty list', () => {
     expect(splitEqually(10, [])).toEqual([]);
+  });
+});
+
+const expense = (amount: number, paidBy: string, splits: [string, number][]): Expense => ({
+  id: Math.random().toString(), groupId: 'g1', description: 'x', amount, paidBy,
+  createdAt: new Date().toISOString(),
+  splits: splits.map(([userId, a]) => ({ userId, amount: a })),
+});
+
+describe('Cent-exact balances', () => {
+  it('keeps a 1-cent debt in the settlement plan', () => {
+    const balances = calculateBalances([expense(0.02, 'A', [['A', 0.01], ['B', 0.01]])]);
+    expect(balances['B'].netBalance).toBe(-0.01);
+    expect(calculateSettlements(balances)).toEqual([{ from: 'B', to: 'A', amount: 0.01 }]);
+  });
+
+  it('does not drift over many odd-cent expenses', () => {
+    // 1000 x $0.10 split three ways: A pays everything
+    const expenses = Array.from({ length: 1000 }, () =>
+      expense(0.1, 'A', splitEqually(0.1, ['A', 'B', 'C']).map(s => [s.userId, s.amount])));
+    const balances = calculateBalances(expenses);
+    // A's share is 0.04 each time, B and C 0.03 each
+    expect(balances['A'].netBalance).toBe(60);
+    expect(balances['B'].netBalance).toBe(-30);
+    expect(balances['C'].netBalance).toBe(-30);
+    const plan = calculateSettlements(balances);
+    expect(plan.reduce((t, p) => t + p.amount, 0)).toBe(60);
+  });
+
+  it('nets to exactly zero once the plan is recorded', () => {
+    const expenses = [
+      expense(10, 'A', splitEqually(10, ['A', 'B', 'C']).map(s => [s.userId, s.amount])),
+      expense(7.77, 'B', splitEqually(7.77, ['A', 'B', 'C']).map(s => [s.userId, s.amount])),
+    ];
+    const plan = calculateSettlements(calculateBalances(expenses));
+    const records: SettlementRecord[] = plan.map((t, i) => ({ ...t, id: String(i), groupId: 'g1', createdAt: '' }));
+    const after = calculateBalances(expenses, records);
+    for (const b of Object.values(after)) expect(b.netBalance).toBe(0);
+    expect(calculateSettlements(after)).toEqual([]);
+  });
+});
+
+describe('validateExpense', () => {
+  const group = ['A', 'B', 'C'];
+  const ok = { amount: 10, paidBy: 'A', splits: [{ userId: 'A', amount: 5 }, { userId: 'B', amount: 5 }] };
+
+  it('accepts a consistent expense', () => {
+    expect(validateExpense(ok, group)).toBeNull();
+  });
+
+  it('rejects shares that do not add up', () => {
+    expect(validateExpense({ ...ok, splits: [{ userId: 'A', amount: 5 }, { userId: 'B', amount: 4.99 }] }, group)).not.toBeNull();
+  });
+
+  it('rejects a payer or split person outside the group', () => {
+    expect(validateExpense({ ...ok, paidBy: 'Z' }, group)).not.toBeNull();
+    expect(validateExpense({ ...ok, splits: [{ userId: 'A', amount: 5 }, { userId: 'Z', amount: 5 }] }, group)).not.toBeNull();
+  });
+
+  it('rejects duplicates, fractions of a cent and non-positive totals', () => {
+    expect(validateExpense({ ...ok, splits: [{ userId: 'A', amount: 5 }, { userId: 'A', amount: 5 }] }, group)).not.toBeNull();
+    expect(validateExpense({ ...ok, amount: 10.005 }, group)).not.toBeNull();
+    expect(validateExpense({ ...ok, amount: 0, splits: [] }, group)).not.toBeNull();
+    expect(validateExpense({ ...ok, amount: NaN }, group)).not.toBeNull();
+  });
+
+  it('accepts every split that splitEqually produces', () => {
+    for (const total of [0.01, 0.1, 1, 7.77, 100, 99999.99]) {
+      expect(validateExpense({ amount: total, paidBy: 'A', splits: splitEqually(total, group) }, group)).toBeNull();
+    }
   });
 });

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useGroup } from '../context/GroupContext';
 import { useAuth } from '../context/AuthContext';
 import { ArrowLeft, Receipt, Share2, Plus, Crown, Trash2, CheckCircle2, MoreVertical, LogOut, ChevronDown, SearchX, UserPlus, Loader2 } from 'lucide-react';
-import { calculateBalances, calculateSettlements } from '../lib/settlement';
+import { calculateBalances, calculateSettlements, isSettled } from '../lib/settlement';
 import { AddExpenseModal } from '../components/AddExpenseModal';
 import { SettleModal } from '../components/SettleModal';
 import { useToast } from '../context/ToastContext';
@@ -134,7 +134,7 @@ export const GroupDetails: React.FC = () => {
   const handleLeaveGroup = async () => {
     setShowGroupMenu(false);
     const myBalance = balances[user?.uid || '']?.netBalance || 0;
-    if (Math.abs(myBalance) > 0.01) {
+    if (!isSettled(myBalance)) {
       showToast(
         myBalance < 0
           ? `Settle the $${Math.abs(myBalance).toFixed(2)} you owe before leaving.`

@@ -8,7 +8,7 @@ import {
 import type { Group, Expense, SettlementRecord } from '../types';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
-import { calculateBalances } from '../lib/settlement';
+import { calculateBalances, isSettled, validateExpense } from '../lib/settlement';
 import { v4 as uuidv4 } from 'uuid';
 
 // ─── Firestore layout ────────────────────────────────────────────────────────
@@ -452,6 +452,10 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!currentGroupId || !uid) return;
     const gid = currentGroupId;
 
+    // Refuse to write an expense that would create or destroy money
+    const problem = validateExpense(expenseData, getUsersInGroup().map(u => u.id));
+    if (problem) throw new Error(problem);
+
     const newExpense: Expense = {
       ...expenseData,
       id: uuidv4(),
@@ -540,7 +544,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const leaveGroup = async (): Promise<boolean> => {
     if (!currentGroup || !uid) return false;
     const myBalance = calculateBalances(expenses, settlementRecords)[uid]?.netBalance ?? 0;
-    if (Math.abs(myBalance) > 0.01) return false;
+    if (!isSettled(myBalance)) return false;
 
     const gid = currentGroup.id;
     const otherMembers = currentGroup.members.filter(m => m !== uid);
