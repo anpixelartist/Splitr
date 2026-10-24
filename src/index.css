@@ -44,6 +44,13 @@
     background-color: rgb(var(--page));
     color: rgb(var(--gray-900));
   }
+  /* No grey flash on tap, and no double-tap-zoom delay on controls */
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  button, a, input, select, textarea, label {
+    touch-action: manipulation;
+  }
   /* Browsers paint form fields their own grey in dark mode; use our surface */
   input, select, textarea {
     background-color: rgb(var(--surface));

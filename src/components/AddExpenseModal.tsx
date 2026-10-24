@@ -93,7 +93,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4">
       {/* Modal card — position:relative so the success overlay can sit on top */}
-      <div className="bg-surface w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col max-h-[90vh] relative overflow-hidden">
+      <div className="bg-surface w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col max-h-[90dvh] relative overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
 
         {/* ── Success overlay ─────────────────────────────────────────────── */}
         {saved && (
@@ -143,6 +143,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
               <label className="block text-sm font-medium text-gray-700 mb-1">Total Amount ($)</label>
               <input
                 type="number"
+                inputMode="decimal"
                 step="0.01"
                 min="0"
                 placeholder="0.00"
@@ -225,6 +226,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
                         <input
                           type="number"
+                          inputMode="decimal"
                           step="0.01"
                           min="0"
                           className="w-full border-none shadow-sm rounded-md pl-7 pr-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
