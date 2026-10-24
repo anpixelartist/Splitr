@@ -73,6 +73,16 @@ const readSettlement = (data: Record<string, unknown>, id: string): SettlementRe
   decidedAt: toMillis(data.decidedAt),
 });
 
+const readExpense = (data: Record<string, unknown>, id: string): Expense => ({
+  ...(data as unknown as Expense),
+  id,
+  editedAt: toMillis(data.editedAt),
+});
+
+// A deleted expense stays hidden this long before the delete is sent, so it
+// can be undone (re-creating it afterwards would break the create rules).
+export const DELETE_UNDO_MS = 5000;
+
 const byNewest = (a: { createdAt: string }, b: { createdAt: string }) =>
   new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
 
@@ -120,7 +130,11 @@ interface GroupContextType {
   /** Admins: undo a wrong claim. */
   unlinkClaim: (participantId: string) => Promise<void>;
   addExpense: (expense: Omit<Expense, 'id' | 'createdAt' | 'createdBy'>) => Promise<void>;
+  /** The person who added it, or an admin. Keeps its date and position. */
+  updateExpense: (id: string, changes: Pick<Expense, 'description' | 'amount' | 'paidBy' | 'splits'>) => Promise<void>;
+  /** Hides it now and deletes it after DELETE_UNDO_MS unless undone. */
   deleteExpense: (id: string) => Promise<void>;
+  undoDeleteExpense: (id: string) => void;
   recordSettlements: (transactions: { from: string; to: string; amount: number }[]) => Promise<void>;
   /** Confirm, reject or undo a recorded payment (who may do what: lib/payments.ts). */
   decidePayment: (id: string, status: PaymentStatus) => Promise<void>;
@@ -142,7 +156,9 @@ const GroupContext = createContext<GroupContextType>({
   claimParticipant: async () => {},
   unlinkClaim: async () => {},
   addExpense: async () => {},
+  updateExpense: async () => {},
   deleteExpense: async () => {},
+  undoDeleteExpense: () => {},
   recordSettlements: async () => {},
   decidePayment: async () => {},
   promoteToAdmin: async () => {},
@@ -319,7 +335,9 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       expensesCol(gid),
       (snapshot) => {
         if (snapshot.empty && snapshot.metadata.fromCache) return;
-        const data = snapshot.docs.map(d => ({ ...d.data(), id: d.id })) as Expense[];
+        const data = snapshot.docs
+          .map(d => readExpense(d.data({ serverTimestamps: 'estimate' }), d.id))
+          .filter(e => !pendingDeletes.current.has(e.id)); // waiting out the Undo window
         data.sort(byNewest);
         setExpenses(data);
         lsSave(expensesLsKey(uid, gid), data);
@@ -567,19 +585,77 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     remote(() => updateDoc(doc(settlementsCol(gid), id), { status, decidedBy: uid, decidedAt: serverTimestamp() }), what);
   };
 
+  const updateExpense = async (
+    id: string,
+    changes: Pick<Expense, 'description' | 'amount' | 'paidBy' | 'splits'>,
+  ) => {
+    if (!currentGroupId || !uid) return;
+    const gid = currentGroupId;
+    const existing = expenses.find(e => e.id === id);
+    if (!existing || (existing.createdBy !== uid && !isAdmin)) throw new Error('Only the person who added this expense or an admin can edit it.');
+    const problem = validateExpense(changes, getUsersInGroup().map(u => u.id));
+    if (problem) throw new Error(problem);
+
+    const editedAt = Date.now();
+    setExpenses(prev => {
+      const updated = prev.map(e => e.id === id ? { ...e, ...changes, editedBy: uid, editedAt } : e);
+      lsSave(expensesLsKey(uid, gid), updated);
+      return updated;
+    });
+    remote(() => updateDoc(doc(expensesCol(gid), id), {
+      ...changes, editedBy: uid, editedAt: serverTimestamp(),
+    }), 'save your changes');
+  };
+
+  const pendingDeletes = useRef(new Map<string, { gid: string; expense: Expense; timer: ReturnType<typeof setTimeout> }>());
+
+  const commitDelete = (id: string) => {
+    const p = pendingDeletes.current.get(id);
+    if (!p) return;
+    clearTimeout(p.timer);
+    pendingDeletes.current.delete(id);
+    remote(() => deleteDoc(doc(expensesCol(p.gid), id)), 'delete the expense');
+  };
+  const commitDeleteRef = useRef(commitDelete);
+  useEffect(() => { commitDeleteRef.current = commitDelete; });
+
+  // Closing or switching away from the app sends any delete still waiting
+  useEffect(() => {
+    const flush = () => {
+      if (document.visibilityState === 'hidden') [...pendingDeletes.current.keys()].forEach(id => commitDeleteRef.current(id));
+    };
+    document.addEventListener('visibilitychange', flush);
+    return () => document.removeEventListener('visibilitychange', flush);
+  }, []);
+
   // Settlement records are deliberately kept: they are money that really
   // changed hands, so balances stay correct after an expense is removed.
   const deleteExpense = async (id: string) => {
     if (!isAdmin || !currentGroupId || !uid) return;
     const gid = currentGroupId;
+    const expense = expenses.find(e => e.id === id);
+    if (!expense) return;
 
     setExpenses(prev => {
       const updated = prev.filter(e => e.id !== id);
       lsSave(expensesLsKey(uid, gid), updated);
       return updated;
     });
+    const timer = setTimeout(() => commitDeleteRef.current(id), DELETE_UNDO_MS);
+    pendingDeletes.current.set(id, { gid, expense, timer });
+  };
 
-    remote(() => deleteDoc(doc(expensesCol(gid), id)), 'delete the expense');
+  const undoDeleteExpense = (id: string) => {
+    const p = pendingDeletes.current.get(id);
+    if (!p || !uid) return;
+    clearTimeout(p.timer);
+    pendingDeletes.current.delete(id);
+    if (p.gid !== currentGroupId) return;
+    setExpenses(prev => {
+      const updated = [p.expense, ...prev.filter(e => e.id !== id)].sort(byNewest);
+      lsSave(expensesLsKey(uid, p.gid), updated);
+      return updated;
+    });
   };
 
   const promoteToAdmin = async (memberUid: string) => {
@@ -691,7 +767,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       expenses: resolved.expenses, settlementRecords: resolved.settlements,
       loading, isAdmin, isMember,
       createGroup, joinGroup, claimParticipant, unlinkClaim,
-      addExpense, deleteExpense, recordSettlements, decidePayment,
+      addExpense, updateExpense, deleteExpense, undoDeleteExpense, recordSettlements, decidePayment,
       promoteToAdmin, demoteAdmin, deleteGroup, leaveGroup,
       getUsersInGroup, getMemberName,
     }}>

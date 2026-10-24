@@ -245,10 +245,34 @@ describe('expenses', () => {
     }));
   });
 
-  it('cannot be edited, and only admins can delete them', async () => {
-    await assertFails(updateDoc(doc(as('alice'), 'groups', GID, 'expenses', 'e1'), { amount: 1 }));
+  it('only admins can delete them', async () => {
     await assertFails(deleteDoc(doc(as('bob'), 'groups', GID, 'expenses', 'e1')));
     await assertSucceeds(deleteDoc(doc(as('alice'), 'groups', GID, 'expenses', 'e1')));
+  });
+
+  const edit = (uid: string, id: string, changes: Record<string, unknown>) =>
+    updateDoc(doc(as(uid), 'groups', GID, 'expenses', id), { ...changes, editedBy: uid, editedAt: serverTimestamp() });
+
+  it('can be edited by whoever added them, or an admin', async () => {
+    // e1 was added by alice (admin); bob adds e2
+    await assertSucceeds(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 'e2'), expense('e2', 'bob')));
+    await assertSucceeds(edit('bob', 'e2', { amount: 40, splits: [{ userId: 'bob', amount: 40 }] }));
+    await assertSucceeds(edit('alice', 'e2', { description: 'Fixed by admin' }));
+    await assertFails(edit('bob', 'e1', { amount: 1 }));
+  });
+
+  it('keeps who added it and when, and stamps the real editor', async () => {
+    await assertFails(edit('alice', 'e1', { createdBy: 'bob' }));
+    await assertFails(edit('alice', 'e1', { createdAt: '2030-01-01T00:00:00.000Z' }));
+    await assertFails(updateDoc(doc(as('alice'), 'groups', GID, 'expenses', 'e1'),
+      { amount: 20, editedBy: 'bob', editedAt: serverTimestamp() }));
+    await assertFails(updateDoc(doc(as('alice'), 'groups', GID, 'expenses', 'e1'), { amount: 20 }));
+  });
+
+  it('applies the same checks to edits as to new expenses', async () => {
+    await assertFails(edit('alice', 'e1', { amount: -5 }));
+    await assertFails(edit('alice', 'e1', { amount: 30.005 }));
+    await assertFails(edit('alice', 'e1', { junk: 'x' }));
   });
 });
 

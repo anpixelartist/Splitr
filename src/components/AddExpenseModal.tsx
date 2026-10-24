@@ -3,24 +3,48 @@ import { useGroup } from '../context/GroupContext';
 import { useAuth } from '../context/AuthContext';
 import { X, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { splitEqually } from '../lib/settlement';
+import type { Expense } from '../types';
 
 interface Props {
   onClose: () => void;
   users: { id: string; name: string }[];
+  /** Open an existing expense instead of adding a new one */
+  expense?: Expense;
+  /** Show it without letting this person change it */
+  readOnly?: boolean;
+  /** It's from before the last recorded payment: warn before changing it */
+  settledBefore?: boolean;
 }
 
-export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
-  const { addExpense, currentGroup } = useGroup();
-  const { user } = useAuth();
+// Prefill for an existing expense: shares merged per person (a claimed
+// placeholder can make one person appear twice), and "Equally" when the
+// shares differ by at most the leftover cent.
+const initialSplit = (expense: Expense | undefined, users: { id: string }[]) => {
+  if (!expense) return { method: 'equal' as const, exact: {}, excluded: new Set<string>() };
+  const shares = new Map<string, number>();
+  for (const s of expense.splits) shares.set(s.userId, Math.round(((shares.get(s.userId) ?? 0) + s.amount) * 100) / 100);
+  const cents = [...shares.values()].map(a => Math.round(a * 100));
+  const equal = cents.length > 0 && Math.max(...cents) - Math.min(...cents) <= 1;
+  return {
+    method: equal ? 'equal' as const : 'exact' as const,
+    exact: Object.fromEntries([...shares].map(([id, a]) => [id, a.toFixed(2)])),
+    excluded: new Set(users.map(u => u.id).filter(id => !shares.has(id))),
+  };
+};
 
-  const [description, setDescription] = useState('');
-  const [amount, setAmount] = useState('');
-  const [paidBy, setPaidBy] = useState(user?.uid || '');
-  const [splitMethod, setSplitMethod] = useState<'equal' | 'exact'>('equal');
-  const [exactSplits, setExactSplits] = useState<Record<string, string>>({});
+export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, readOnly = false, settledBefore = false }) => {
+  const { addExpense, updateExpense, currentGroup } = useGroup();
+  const { user } = useAuth();
+  const [init] = useState(() => initialSplit(expense, users));
+
+  const [description, setDescription] = useState(expense?.description ?? '');
+  const [amount, setAmount] = useState(expense ? expense.amount.toFixed(2) : '');
+  const [paidBy, setPaidBy] = useState(expense?.paidBy ?? user?.uid ?? '');
+  const [splitMethod, setSplitMethod] = useState<'equal' | 'exact'>(init.method);
+  const [exactSplits, setExactSplits] = useState<Record<string, string>>(init.exact);
   // Track who was unticked (not who is ticked) so members who join while the
   // modal is open are included by default.
-  const [excludedUsers, setExcludedUsers] = useState<Set<string>>(new Set());
+  const [excludedUsers, setExcludedUsers] = useState<Set<string>>(init.excluded);
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -80,7 +104,14 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
     // ── Save ────────────────────────────────────────────────────────────────
     setSaving(true);
     try {
-      await addExpense({ groupId: currentGroup.id, description: description.trim(), amount: totalAmount, paidBy, splits });
+      if (expense) {
+        if (settledBefore && !window.confirm(
+          'This changes balances you already settled. People may owe money again.\n\nSave the changes?',
+        )) { setSaving(false); return; }
+        await updateExpense(expense.id, { description: description.trim(), amount: totalAmount, paidBy, splits });
+      } else {
+        await addExpense({ groupId: currentGroup.id, description: description.trim(), amount: totalAmount, paidBy, splits });
+      }
       setSaved(true);
       // Close after the animation plays
       setTimeout(onClose, 1150);
@@ -102,14 +133,14 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
               <CheckCircle2 className="w-12 h-12 text-white" strokeWidth={2.5} />
             </div>
             <p className="anim-fade-in-up text-xl font-bold text-gray-800" style={{ animationDelay: '0.15s' }}>
-              Expense saved!
+              {expense ? 'Changes saved!' : 'Expense saved!'}
             </p>
           </div>
         )}
 
         {/* ── Header ──────────────────────────────────────────────────────── */}
         <div className="p-4 border-b flex justify-between items-center sticky top-0 bg-surface rounded-t-2xl z-10">
-          <h2 className="text-xl font-bold">Add Expense</h2>
+          <h2 className="text-xl font-bold">{!expense ? 'Add Expense' : readOnly ? 'Expense' : 'Edit Expense'}</h2>
           <button onClick={onClose} disabled={saving} className="p-2 rounded-full hover:bg-gray-100 disabled:opacity-40" aria-label="Close">
             <X className="w-6 h-6 text-gray-500" />
           </button>
@@ -135,7 +166,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
                 className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none text-lg"
                 value={description}
                 onChange={e => { setDescription(e.target.value); setError(null); }}
-                disabled={saving}
+                disabled={saving || readOnly}
               />
             </div>
 
@@ -150,7 +181,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
                 className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none text-2xl font-bold"
                 value={amount}
                 onChange={e => { setAmount(e.target.value); setError(null); }}
-                disabled={saving}
+                disabled={saving || readOnly}
               />
             </div>
 
@@ -160,7 +191,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
                 className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none"
                 value={paidBy}
                 onChange={e => setPaidBy(e.target.value)}
-                disabled={saving}
+                disabled={saving || readOnly}
               >
                 {users.map(u => (
                   <option key={u.id} value={u.id}>
@@ -178,7 +209,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
                     <button
                       key={m}
                       type="button"
-                      disabled={saving}
+                      disabled={saving || readOnly}
                       className={`px-3 py-1 rounded-md text-sm font-medium capitalize transition-colors ${
                         splitMethod === m ? 'bg-surface shadow-sm' : 'text-gray-500'
                       }`}
@@ -208,7 +239,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
                           });
                           setError(null);
                         }}
-                        disabled={saving}
+                        disabled={saving || readOnly}
                       />
                       <span className="font-medium text-gray-800">{u.id === user?.uid ? 'Me' : u.name}</span>
                     </label>
@@ -236,7 +267,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
                             setExactSplits(prev => ({ ...prev, [u.id]: e.target.value }));
                             setError(null);
                           }}
-                          disabled={saving}
+                          disabled={saving || readOnly}
                         />
                       </div>
                     </div>
@@ -249,6 +280,11 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
 
         {/* ── Footer / submit ──────────────────────────────────────────────── */}
         <div className="p-4 border-t bg-gray-50 rounded-b-2xl">
+          {readOnly ? (
+            <p className="text-sm text-center text-gray-500 py-2">
+              Only the person who added this expense or an admin can change it.
+            </p>
+          ) : (
           <button
             type="submit"
             form="expense-form"
@@ -261,9 +297,10 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
                 Saving…
               </>
             ) : (
-              'Save Expense'
+              expense ? 'Save changes' : 'Save Expense'
             )}
           </button>
+          )}
         </div>
       </div>
     </div>
