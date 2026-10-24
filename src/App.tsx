@@ -6,12 +6,13 @@ import { LoginPage } from './pages/LoginPage';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { GroupProvider } from './context/GroupContext';
 import { ToastProvider } from './context/ToastContext';
+import { NamePrompt } from './components/NamePrompt';
 
 const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   // AuthProvider already hides children while loading (renders null)
   if (!user) return <LoginPage />;
-  return <>{children}</>;
+  return <>{children}<NamePrompt /></>;
 };
 
 function App() {

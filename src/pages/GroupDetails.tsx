@@ -1,12 +1,16 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useGroup } from '../context/GroupContext';
+import { useGroup, DELETE_UNDO_MS } from '../context/GroupContext';
 import { useAuth } from '../context/AuthContext';
 import { ArrowLeft, Receipt, Share2, Plus, Crown, Trash2, CheckCircle2, MoreVertical, LogOut, ChevronDown, SearchX, UserPlus, Loader2 } from 'lucide-react';
 import { calculateBalances, calculateSettlements, isSettled } from '../lib/settlement';
 import { AddExpenseModal } from '../components/AddExpenseModal';
 import { SettleModal } from '../components/SettleModal';
 import { useToast } from '../context/ToastContext';
+import { DEFAULT_CURRENCY, formatMoney, formatDate } from '../lib/money';
+import { unclaimedParticipants, claimedBy } from '../lib/claims';
+import { effectiveStatus, allowedActions, countsTowardBalances } from '../lib/payments';
+import type { Expense, PaymentStatus, SettlementRecord } from '../types';
 
 export const GroupDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -24,23 +28,36 @@ export const GroupDetails: React.FC = () => {
     getUsersInGroup,
     isAdmin,
     deleteExpense,
+    undoDeleteExpense,
     recordSettlements,
+    decidePayment,
     promoteToAdmin,
     demoteAdmin,
     deleteGroup,
     leaveGroup,
+    claimParticipant,
+    unlinkClaim,
   } = useGroup();
 
   const { showToast } = useToast();
+  const currency = currentGroup?.currency ?? DEFAULT_CURRENCY;
+  const money = (n: number) => formatMoney(n, currency);
 
   const [activeTab, setActiveTab] = useState<'expenses' | 'balances'>('expenses');
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
+  const [openExpense, setOpenExpense] = useState<Expense | null>(null);
   const [isSettleOpen, setIsSettleOpen] = useState(false);
   const [showGroupMenu, setShowGroupMenu] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [joining, setJoining] = useState(false);
+  // Joining: which name-only placeholder this person is ('new' = none of them)
+  const [claimChoice, setClaimChoice] = useState<string | null>(null);
+  const claimDismissKey = `splitr_claim_dismissed_${id}_${user?.uid}`;
+  const [claimBannerDismissed, setClaimBannerDismissed] = useState(() => {
+    try { return localStorage.getItem(claimDismissKey) === '1'; } catch { return false; }
+  });
 
   useEffect(() => {
     if (id) setCurrentGroupId(id);
@@ -50,18 +67,29 @@ export const GroupDetails: React.FC = () => {
   // getUsersInGroup is now synchronous — reads from group.memberNames, no Firestore
   const groupUsers = useMemo(() => getUsersInGroup(), [getUsersInGroup]);
 
+  // Only payments the receiver confirmed (or auto-confirmed after 7 days)
+  // move balances; pending ones are listed separately.
+  const confirmedPayments = useMemo(
+    () => settlementRecords.filter(r => countsTowardBalances(r)),
+    [settlementRecords],
+  );
+  const pendingPayments = useMemo(
+    () => settlementRecords.filter(r => effectiveStatus(r) === 'pending'),
+    [settlementRecords],
+  );
+
   const balances = useMemo(
-    () => calculateBalances(expenses, settlementRecords),
-    [expenses, settlementRecords],
+    () => calculateBalances(expenses, confirmedPayments),
+    [expenses, confirmedPayments],
   );
   const settlementPlan = useMemo(() => calculateSettlements(balances), [balances]);
 
   // The timestamp of the most-recent settlement record (ISO string, lexicographically comparable)
   const lastSettledAt = useMemo(
-    () => settlementRecords.length > 0
-      ? settlementRecords.reduce((max, r) => r.createdAt > max ? r.createdAt : max, '')
+    () => confirmedPayments.length > 0
+      ? confirmedPayments.reduce((max, r) => r.createdAt > max ? r.createdAt : max, '')
       : null,
-    [settlementRecords],
+    [confirmedPayments],
   );
 
   // An expense is "settled" only if it was created BEFORE the last settlement was recorded.
@@ -75,7 +103,7 @@ export const GroupDetails: React.FC = () => {
   // The group banner shows only when every expense is pre-settlement (no new unsettled expenses)
   const isGroupSettled =
     settlementPlan.length === 0 &&
-    settlementRecords.length > 0 &&
+    confirmedPayments.length > 0 &&
     expenses.length > 0 &&
     expenses.every(e => e.createdAt <= (lastSettledAt ?? ''));
 
@@ -117,7 +145,7 @@ export const GroupDetails: React.FC = () => {
   const handleJoin = async () => {
     if (!id) return;
     setJoining(true);
-    const result = await joinGroup(id);
+    const result = await joinGroup(id, claimChoice && claimChoice !== 'new' ? claimChoice : undefined);
     setJoining(false);
     if (result === 'joined') showToast(`Joined ${currentGroup?.name ?? 'group'}`);
     else if (result === 'offline') showToast("You're offline — connect to join this group.", 'error');
@@ -125,10 +153,64 @@ export const GroupDetails: React.FC = () => {
     else showToast("Couldn't join the group. Please try again.", 'error');
   };
 
+  const handleClaim = async (p: { id: string; name: string }) => {
+    const bal = balances[p.id]?.netBalance ?? 0;
+    const owed = bal === 0 ? '' : `, including what ${p.name} ${bal < 0 ? 'owes' : 'is owed'} (${money(Math.abs(bal))})`;
+    if (!window.confirm(`Take over ${p.name}'s place in this group${owed}?\n\nAn admin can undo this.`)) return;
+    await claimParticipant(p.id);
+    showToast(`You're now ${p.name} in this group`);
+  };
+
+  const dismissClaimBanner = () => {
+    setClaimBannerDismissed(true);
+    try { localStorage.setItem(claimDismissKey, '1'); } catch { /* ignore */ }
+  };
+
+  const handleUnlink = async (memberName: string, participantId: string, participantName: string) => {
+    if (!window.confirm(`Unlink ${memberName} from "${participantName}"?\n\n${participantName}'s share of past expenses goes back to the name-only entry.`)) return;
+    await unlinkClaim(participantId);
+    showToast(`${memberName} is no longer linked to ${participantName}`);
+  };
+
+  const nameOrYou = (id: string, you = 'you') => id === user?.uid ? you : getUserName(id);
+
+  const actionLabel = (r: SettlementRecord, action: PaymentStatus) =>
+    action === 'confirmed' ? 'Confirm'
+      : action === 'rejected' ? 'Reject'
+      : (r.status ?? 'confirmed') === 'pending' ? 'Cancel' : 'Undo';
+
+  const handlePaymentAction = async (r: SettlementRecord, action: PaymentStatus) => {
+    const payment = `${money(r.amount)} from ${nameOrYou(r.from)} to ${nameOrYou(r.to)}`;
+    if (action === 'rejected' && !window.confirm(`Reject ${payment}?\n\nIt won't count, and balances stay as they are.`)) return;
+    if (action === 'cancelled' && (r.status ?? 'confirmed') === 'confirmed'
+      && !window.confirm(`Undo ${payment}?\n\nBalances go back to before this payment.`)) return;
+    await decidePayment(r.id, action);
+    showToast(action === 'confirmed' ? 'Payment confirmed' : action === 'rejected' ? 'Payment rejected' : 'Payment undone');
+  };
+
+  const paymentButtons = (r: SettlementRecord) =>
+    allowedActions(r, user?.uid ?? '', { memberUids: currentGroup?.members ?? [], isAdmin }).map(a => (
+      <button
+        key={a}
+        onClick={() => handlePaymentAction(r, a)}
+        className={`text-xs font-semibold px-2.5 py-1.5 rounded-lg border transition-colors ${
+          a === 'confirmed'
+            ? 'bg-green-600 border-green-600 text-white hover:bg-green-700'
+            : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+        }`}
+      >
+        {actionLabel(r, a)}
+      </button>
+    ));
+
   const handleDeleteExpense = async (expenseId: string) => {
     if (confirmDeleteId !== expenseId) { setConfirmDeleteId(expenseId); return; }
     await deleteExpense(expenseId);
     setConfirmDeleteId(null);
+    showToast('Expense deleted', 'success', {
+      action: { label: 'Undo', onClick: () => undoDeleteExpense(expenseId) },
+      duration: DELETE_UNDO_MS,
+    });
   };
 
   const handleLeaveGroup = async () => {
@@ -137,8 +219,8 @@ export const GroupDetails: React.FC = () => {
     if (!isSettled(myBalance)) {
       showToast(
         myBalance < 0
-          ? `Settle the $${Math.abs(myBalance).toFixed(2)} you owe before leaving.`
-          : `You're still owed $${myBalance.toFixed(2)} — settle up before leaving.`,
+          ? `Settle the ${money(Math.abs(myBalance))} you owe before leaving.`
+          : `You're still owed ${money(myBalance)} — settle up before leaving.`,
         'error',
       );
       return;
@@ -180,6 +262,7 @@ export const GroupDetails: React.FC = () => {
   }
 
   // Visiting a shared link for a group you haven't joined yet
+  const joinChoices = unclaimedParticipants(currentGroup.participants, currentGroup.claims);
   if (!isMember) {
     return (
       <div className="max-w-md mx-auto min-h-screen flex flex-col items-center justify-center p-8 text-center">
@@ -189,12 +272,39 @@ export const GroupDetails: React.FC = () => {
         <p className="text-sm text-gray-500 mb-1">You've been invited to</p>
         <h1 className="text-2xl font-bold text-gray-900 mb-1">{currentGroup.name}</h1>
         <p className="text-sm text-gray-400 mb-6">
-          {currentGroup.members.length + (currentGroup.participants?.length ?? 0)} members · code{' '}
+          {currentGroup.members.length + joinChoices.length} members · code{' '}
           <span className="font-mono">{currentGroup.id}</span>
         </p>
+        {joinChoices.length > 0 && (
+          <div className="w-full text-left mb-5">
+            <p className="font-semibold text-gray-900">Which of these is you?</p>
+            <p className="text-xs text-gray-500 mt-0.5 mb-3">
+              Friends may have added you by name before you joined. Pick yourself so your share of past expenses becomes yours.
+            </p>
+            <div className="space-y-2" role="radiogroup" aria-label="Which of these is you?">
+              {[...joinChoices, { id: 'new', name: "I'm not on this list" }].map(p => (
+                <label
+                  key={p.id}
+                  className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                    claimChoice === p.id ? 'border-green-500 bg-green-50' : 'bg-surface hover:bg-gray-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="claim"
+                    className="w-4 h-4 accent-green-600"
+                    checked={claimChoice === p.id}
+                    onChange={() => setClaimChoice(p.id)}
+                  />
+                  <span className={p.id === 'new' ? 'text-gray-600' : 'font-medium text-gray-800'}>{p.name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
         <button
           onClick={handleJoin}
-          disabled={joining}
+          disabled={joining || (joinChoices.length > 0 && !claimChoice)}
           className="w-full bg-green-600 text-white py-3 rounded-xl font-semibold hover:bg-green-700 disabled:opacity-60 flex items-center justify-center gap-2"
         >
           {joining && <Loader2 className="w-5 h-5 animate-spin" />}
@@ -250,6 +360,36 @@ export const GroupDetails: React.FC = () => {
       </header>
 
       <main className="flex-1 p-4 lg:p-8">
+        {/* Joined as a new person while a placeholder with your name exists */}
+        {(() => {
+          const choices = unclaimedParticipants(currentGroup.participants, currentGroup.claims);
+          const show = !claimBannerDismissed && choices.length > 0
+            && currentGroup.createdBy !== user?.uid // the creator added these names
+            && !claimedBy(currentGroup.claims, user?.uid ?? '');
+          if (!show) return null;
+          return (
+            <div className="anim-fade-in mb-4 bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <p className="font-semibold text-gray-900">Are you one of these people?</p>
+              <p className="text-sm text-gray-600 mt-0.5">
+                They were added by name before you joined. Picking yourself moves their share of expenses to you.
+              </p>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {choices.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => handleClaim(p)}
+                    className="px-3 py-1.5 rounded-lg bg-surface border border-blue-200 text-sm font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-100"
+                  >
+                    I'm {p.name}
+                  </button>
+                ))}
+                <button onClick={dismissClaimBanner} className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700">
+                  None of these
+                </button>
+              </div>
+            </div>
+          );
+        })()}
         <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-8 lg:items-start">
           {/* Phones show one tab at a time; laptops show both columns */}
           <div className={`space-y-3 ${activeTab === 'expenses' ? '' : 'hidden'} lg:block`}>
@@ -267,15 +407,15 @@ export const GroupDetails: React.FC = () => {
                 <div className="z-10">
                   <p className="font-bold text-green-800 dark:text-green-300 text-base leading-tight">All Settled Up!</p>
                   <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
-                    {settlementRecords.length} payment{settlementRecords.length !== 1 ? 's' : ''} recorded
-                    {' · '}{new Date(settlementRecords[0].createdAt).toLocaleDateString()}
+                    {confirmedPayments.length} payment{confirmedPayments.length !== 1 ? 's' : ''} recorded
+                    {' · '}{formatDate(confirmedPayments[0].createdAt)}
                   </p>
                 </div>
               </div>
             )}
 
-            {isAdmin && expenses.length > 0 && !isGroupSettled && (
-              <p className="text-xs text-center text-gray-400">Use the trash icon to delete an expense</p>
+            {expenses.length > 0 && !isGroupSettled && (
+              <p className="text-xs text-center text-gray-400">Tap an expense to see or edit it</p>
             )}
 
             {expenses.length === 0 ? (
@@ -290,7 +430,12 @@ export const GroupDetails: React.FC = () => {
                 return (
                   <div
                     key={expense.id}
-                    className={`p-4 rounded-xl border shadow-sm transition-all ${
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ${expense.description}`}
+                    onClick={() => { if (!isConfirming) setOpenExpense(expense); }}
+                    onKeyDown={e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); setOpenExpense(expense); } }}
+                    className={`p-4 rounded-xl border shadow-sm transition-all cursor-pointer hover:border-blue-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                       isConfirming
                         ? 'border-red-300 bg-red-50'
                         : expSettled
@@ -301,10 +446,10 @@ export const GroupDetails: React.FC = () => {
                     <div className="flex justify-between items-start mb-1">
                       <h3 className="font-semibold text-gray-800 flex-1 mr-2">{expense.description}</h3>
                       <div className="flex items-center gap-2 shrink-0">
-                        <span className="font-bold text-gray-900">${expense.amount.toFixed(2)}</span>
+                        <span className="font-bold text-gray-900">{money(expense.amount)}</span>
                         {isAdmin && (
                           isConfirming ? (
-                            <div className="flex flex-col items-end gap-1">
+                            <div className="flex flex-col items-end gap-1" onClick={e => e.stopPropagation()}>
                               <div className="flex items-center gap-1">
                                 <button
                                   onClick={() => setConfirmDeleteId(null)}
@@ -322,7 +467,7 @@ export const GroupDetails: React.FC = () => {
                             </div>
                           ) : (
                             <button
-                              onClick={() => handleDeleteExpense(expense.id)}
+                              onClick={e => { e.stopPropagation(); handleDeleteExpense(expense.id); }}
                               className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                               aria-label={`Delete ${expense.description}`}
                             >
@@ -333,12 +478,18 @@ export const GroupDetails: React.FC = () => {
                       </div>
                     </div>
                     <div className="text-sm text-gray-500 flex justify-between items-center">
-                      <span>Paid by {getUserName(expense.paidBy)}</span>
-                      <span>{new Date(expense.createdAt).toLocaleDateString()}</span>
+                      <span>Paid by {expense.paidBy === user?.uid ? 'you' : getUserName(expense.paidBy)}</span>
+                      <span>{formatDate(expense.createdAt)}</span>
                     </div>
                     {expense.createdBy && expense.createdBy !== expense.paidBy && (
                       <p className="text-xs text-gray-400 mt-0.5">
                         Added by {expense.createdBy === user?.uid ? 'you' : getUserName(expense.createdBy)}
+                      </p>
+                    )}
+                    {expense.editedBy && (
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        Edited by {expense.editedBy === user?.uid ? 'you' : getUserName(expense.editedBy)}
+                        {expense.editedAt && <> · {formatDate(expense.editedAt, undefined, false)}</>}
                       </p>
                     )}
                     {/* Settled badge */}
@@ -365,11 +516,34 @@ export const GroupDetails: React.FC = () => {
                       {myBalance > 0 ? 'You are owed' : myBalance < 0 ? 'You owe' : 'You are settled up'}
                     </p>
                     <p className={`text-3xl font-bold ${myBalance > 0 ? 'text-green-700 dark:text-green-300' : myBalance < 0 ? 'text-red-700 dark:text-red-300' : 'text-gray-700'}`}>
-                      ${Math.abs(myBalance).toFixed(2)}
+                      {money(Math.abs(myBalance))}
                     </p>
                   </div>
                 );
               })()}
+
+              {/* Payments waiting for the receiver: not in the balance yet */}
+              {pendingPayments.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {pendingPayments.map(r => (
+                    <div key={r.id} className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm">
+                      <p className="text-gray-800">
+                        {r.to === user?.uid ? (
+                          <><strong>{getUserName(r.from)}</strong> paid you <strong>{money(r.amount)}</strong>?</>
+                        ) : (
+                          <><strong>{money(r.amount)}</strong> from {nameOrYou(r.from)} to {nameOrYou(r.to)} is pending</>
+                        )}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {r.to === user?.uid
+                          ? `Recorded by ${nameOrYou(r.recordedBy ?? '')}. It counts once you confirm, or in 7 days.`
+                          : `Waiting for ${getUserName(r.to)} to confirm. Recorded by ${nameOrYou(r.recordedBy ?? '')}.`}
+                      </p>
+                      {paymentButtons(r).length > 0 && <div className="flex gap-2 mt-2">{paymentButtons(r)}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
 
             {/* Settlement Plan */}
@@ -419,7 +593,7 @@ export const GroupDetails: React.FC = () => {
                           <span className="font-semibold">{s.to === user?.uid ? 'you' : getUserName(s.to)}</span>
                         </div>
                       </div>
-                      <span className="font-bold text-gray-900">${s.amount.toFixed(2)}</span>
+                      <span className="font-bold text-gray-900">{money(s.amount)}</span>
                     </div>
                   ))}
                 </div>
@@ -447,31 +621,45 @@ export const GroupDetails: React.FC = () => {
 
                 {showHistory && (
                   <div className="space-y-2">
-                    {(showAllHistory ? settlementRecords : settlementRecords.slice(0, 5)).map(r => (
-                      <div
-                        key={r.id}
-                        className="bg-surface p-4 rounded-xl border border-green-100 shadow-sm flex items-center justify-between opacity-70"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center shrink-0">
-                            <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
+                    {(showAllHistory ? settlementRecords : settlementRecords.slice(0, 5)).map(r => {
+                      const status = effectiveStatus(r);
+                      const autoConfirmed = status === 'confirmed' && r.status === 'pending';
+                      const inactive = status === 'rejected' || status === 'cancelled';
+                      return (
+                        <div key={r.id} className={`bg-surface p-4 rounded-xl border shadow-sm ${inactive ? 'opacity-60' : ''}`}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                                status === 'confirmed' ? 'bg-green-100' : status === 'pending' ? 'bg-amber-100' : 'bg-gray-100'
+                              }`}>
+                                <CheckCircle2 className={`w-4 h-4 ${
+                                  status === 'confirmed' ? 'text-green-600 dark:text-green-400' : 'text-gray-400'
+                                }`} />
+                              </div>
+                              <div className="text-sm min-w-0">
+                                <p>
+                                  <span className={`font-semibold ${inactive ? 'line-through text-gray-500' : 'text-gray-800'}`}>{nameOrYou(r.from, 'You')}</span>
+                                  <span className="text-gray-400 mx-1">paid</span>
+                                  <span className={`font-semibold ${inactive ? 'line-through text-gray-500' : 'text-gray-800'}`}>{nameOrYou(r.to)}</span>
+                                </p>
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                  {status === 'pending' ? 'Pending' : status === 'rejected' ? 'Rejected' : status === 'cancelled' ? 'Undone' : autoConfirmed ? 'Auto-confirmed' : 'Confirmed'}
+                                  {r.recordedBy && <> · recorded by {nameOrYou(r.recordedBy)}</>}
+                                  {r.decidedBy && inactive && <> · by {nameOrYou(r.decidedBy)}</>}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className={`font-bold ${inactive ? 'line-through text-gray-400' : 'text-gray-900'}`}>{money(r.amount)}</p>
+                              <p className="text-xs text-gray-400">{formatDate(r.createdAt)}</p>
+                            </div>
                           </div>
-                          <div className="text-sm">
-                            <span className="line-through text-gray-500 font-semibold">
-                              {r.from === user?.uid ? 'You' : getUserName(r.from)}
-                            </span>
-                            <span className="text-gray-400 mx-1">paid</span>
-                            <span className="line-through text-gray-500 font-semibold">
-                              {r.to === user?.uid ? 'you' : getUserName(r.to)}
-                            </span>
-                          </div>
+                          {status !== 'pending' && paymentButtons(r).length > 0 && (
+                            <div className="flex justify-end gap-2 mt-2">{paymentButtons(r)}</div>
+                          )}
                         </div>
-                        <div className="text-right shrink-0 ml-2">
-                          <p className="line-through text-gray-400 font-bold">${r.amount.toFixed(2)}</p>
-                          <p className="text-xs text-gray-400">{new Date(r.createdAt).toLocaleDateString()}</p>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {settlementRecords.length > 5 && !showAllHistory && (
                       <button
@@ -496,6 +684,8 @@ export const GroupDetails: React.FC = () => {
                   const isMe = u.id === user?.uid;
                   const isLastAdmin = memberIsAdmin && (currentGroup.admins?.length ?? 0) <= 1;
                   const bal = balances[u.id]?.netBalance || 0;
+                  const claimedId = memberIsFirebase ? claimedBy(currentGroup.claims, u.id) : undefined;
+                  const claimedName = claimedId && currentGroup.participants?.find(p => p.id === claimedId)?.name;
 
                   return (
                     <div key={u.id} className="p-3 flex items-center gap-3">
@@ -515,15 +705,27 @@ export const GroupDetails: React.FC = () => {
                           {!memberIsFirebase && (
                             <span className="text-xs text-gray-400 border border-gray-200 rounded px-1 whitespace-nowrap">not on Splitr yet</span>
                           )}
+                          {claimedName && claimedName !== u.name && (
+                            <span className="text-xs text-gray-400 whitespace-nowrap">was “{claimedName}”</span>
+                          )}
                         </div>
                         <p className="text-xs text-gray-400 mt-0.5">
                           {bal === 0 ? 'Settled' : (
                             <span className={bal > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
-                              {bal > 0 ? '+' : '-'}${Math.abs(bal).toFixed(2)}
+                              {bal > 0 ? '+' : '-'}{money(Math.abs(bal))}
                             </span>
                           )}
                         </p>
                       </div>
+                      {isAdmin && claimedId && claimedName && (
+                        <button
+                          onClick={() => handleUnlink(u.name, claimedId, claimedName)}
+                          className="text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 shrink-0"
+                          title={`Undo: ${u.name} is not ${claimedName}`}
+                        >
+                          Unlink
+                        </button>
+                      )}
                       {isAdmin && memberIsFirebase && !isMe && (
                         <button
                           onClick={async () => {
@@ -625,10 +827,22 @@ export const GroupDetails: React.FC = () => {
         />
       )}
 
+      {openExpense && (
+        <AddExpenseModal
+          key={openExpense.id}
+          expense={openExpense}
+          readOnly={openExpense.createdBy !== user?.uid && !isAdmin}
+          settledBefore={lastSettledAt !== null && openExpense.createdAt <= lastSettledAt}
+          onClose={() => setOpenExpense(null)}
+          users={groupUsers}
+        />
+      )}
+
       {isSettleOpen && (
         <SettleModal
           pendingTransactions={settlementPlan}
           groupName={currentGroup.name}
+          currency={currency}
           getUserName={getUserName}
           currentUserId={user?.uid || ''}
           onRecord={async (selected) => { await recordSettlements(selected); }}

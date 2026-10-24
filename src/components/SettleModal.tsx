@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { X, CheckCircle2, Loader2, Share2 } from 'lucide-react';
 import type { SettlementTransaction } from '../types';
 import { shareSettlementImage } from '../lib/shareSettlement';
+import { DEFAULT_CURRENCY, currencyDigits, currencySymbol } from '../lib/money';
 
 interface Props {
+  currency?: string;
   pendingTransactions: SettlementTransaction[];
   groupName: string;
   getUserName: (uid: string) => string;
@@ -19,11 +21,15 @@ export const SettleModal: React.FC<Props> = ({
   currentUserId,
   onRecord,
   onClose,
+  currency = DEFAULT_CURRENCY,
 }) => {
+  const digits = currencyDigits(currency);
   // Keyed by payer→payee (not list index) so a plan that changes while the
   // modal is open can't shift checkmarks onto the wrong rows.
   const keyOf = (t: SettlementTransaction) => `${t.from}->${t.to}`;
   const [deselected, setDeselected] = useState<Set<string>>(new Set());
+  // Partial payments: an edited amount per row (blank = the full amount)
+  const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [recording, setRecording] = useState(false);
   const [done, setDone] = useState(false);
   const [recorded, setRecorded] = useState<SettlementTransaction[]>([]);
@@ -36,7 +42,21 @@ export const SettleModal: React.FC<Props> = ({
       return next;
     });
 
-  const selectedList = pendingTransactions.filter(t => !deselected.has(keyOf(t)));
+  // Whole cents between 0.01 and what's owed; null when the typed amount is invalid
+  const amountFor = (t: SettlementTransaction): number | null => {
+    const raw = amounts[keyOf(t)];
+    if (raw === undefined || raw.trim() === '') return t.amount;
+    const value = parseFloat(raw);
+    if (digits === 0 && !Number.isInteger(value)) return null; // e.g. no fractions of a yen
+    const cents = Math.round(value * 100);
+    if (!Number.isFinite(cents) || cents < 1 || cents > Math.round(t.amount * 100)) return null;
+    return cents / 100;
+  };
+
+  const selectedList = pendingTransactions
+    .filter(t => !deselected.has(keyOf(t)))
+    .map(t => ({ ...t, amount: amountFor(t) ?? 0 }));
+  const hasInvalidAmount = pendingTransactions.some(t => !deselected.has(keyOf(t)) && amountFor(t) === null);
 
   const handleRecord = async () => {
     if (selectedList.length === 0) return;
@@ -57,6 +77,7 @@ export const SettleModal: React.FC<Props> = ({
         recorded,
         groupName,
         (uid) => uid === currentUserId ? 'You' : getUserName(uid),
+        currency,
       );
     } finally {
       setSharing(false);
@@ -104,7 +125,7 @@ export const SettleModal: React.FC<Props> = ({
           <div className="p-4 border-b flex justify-between items-center shrink-0">
             <div>
               <h2 className="text-xl font-bold">Settle Up</h2>
-              <p className="text-sm text-gray-400">Select payments to record as done</p>
+              <p className="text-sm text-gray-400">Tick what was paid. Change an amount for a part payment.</p>
             </div>
             <button
               onClick={onClose}
@@ -124,34 +145,56 @@ export const SettleModal: React.FC<Props> = ({
               const fromName = t.from === currentUserId ? 'You' : getUserName(t.from);
               const toName = t.to === currentUserId ? 'You' : getUserName(t.to);
               return (
-                <button
+                <div
                   key={key}
-                  type="button"
-                  onClick={() => toggle(key)}
-                  disabled={recording}
-                  className={`w-full flex items-center gap-3 p-4 rounded-xl border transition-colors text-left ${
-                    isSelected ? 'bg-blue-50 border-blue-200' : 'bg-surface border-gray-200 hover:bg-gray-50'
-                  } disabled:opacity-60`}
+                  className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${
+                    isSelected ? 'bg-blue-50 border-blue-200' : 'bg-surface border-gray-200'
+                  } ${recording ? 'opacity-60' : ''}`}
                 >
-                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
-                    isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-surface'
-                  }`}>
-                    {isSelected && (
-                      <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
-                        <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    )}
+                  <button
+                    type="button"
+                    onClick={() => toggle(key)}
+                    disabled={recording}
+                    aria-pressed={isSelected}
+                    className="flex items-center gap-3 flex-1 min-w-0 text-left py-1"
+                  >
+                    <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                      isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-surface'
+                    }`}>
+                      {isSelected && (
+                        <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
+                          <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </div>
+                    <div className="flex-1 text-sm min-w-0">
+                      <span className="font-semibold">{fromName}</span>
+                      <span className="text-gray-500 mx-1">{t.from === currentUserId ? 'pay' : 'pays'}</span>
+                      <span className="font-semibold">{toName}</span>
+                      {t.to !== currentUserId && (
+                        <span className="block text-xs text-gray-400">{toName} will be asked to confirm</span>
+                      )}
+                    </div>
+                  </button>
+                  <div className="relative w-28 shrink-0">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">{currencySymbol(currency)}</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step={digits === 0 ? '1' : '0.01'}
+                      min={digits === 0 ? '1' : '0.01'}
+                      max={t.amount}
+                      aria-label={`Amount ${fromName} ${t.from === currentUserId ? 'pay' : 'pays'} ${toName}`}
+                      disabled={recording || !isSelected}
+                      placeholder={t.amount.toFixed(digits)}
+                      value={amounts[key] ?? t.amount.toFixed(digits)}
+                      onChange={e => setAmounts(prev => ({ ...prev, [key]: e.target.value }))}
+                      className={`w-full pl-6 pr-2 py-2 rounded-lg border text-right font-bold text-gray-900 outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 ${
+                        isSelected && amountFor(t) === null ? 'border-red-400' : 'border-gray-200'
+                      }`}
+                    />
                   </div>
-                  <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center font-bold text-gray-600 text-xs shrink-0">
-                    {getUserName(t.from).charAt(0).toUpperCase()}
-                  </div>
-                  <div className="flex-1 text-sm min-w-0">
-                    <span className="font-semibold">{fromName}</span>
-                    <span className="text-gray-500 mx-1">pays</span>
-                    <span className="font-semibold">{toName}</span>
-                  </div>
-                  <span className="font-bold text-gray-900 shrink-0">${t.amount.toFixed(2)}</span>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -160,13 +203,15 @@ export const SettleModal: React.FC<Props> = ({
           <div className="p-4 border-t bg-gray-50 shrink-0">
             <button
               onClick={handleRecord}
-              disabled={recording || selectedList.length === 0}
+              disabled={recording || selectedList.length === 0 || hasInvalidAmount}
               className="w-full bg-green-600 text-white font-bold text-lg py-4 rounded-xl hover:bg-green-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {recording ? (
                 <><Loader2 className="w-5 h-5 animate-spin" />Recording…</>
               ) : selectedList.length === 0 ? (
                 'Select at least one'
+              ) : hasInvalidAmount ? (
+                'Amounts must be 0.01 up to what’s owed'
               ) : (
                 `Record ${selectedList.length} settlement${selectedList.length !== 1 ? 's' : ''}`
               )}

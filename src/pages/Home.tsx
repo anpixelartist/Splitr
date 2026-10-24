@@ -2,28 +2,28 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useGroup } from '../context/GroupContext';
-import { Wallet, Users, PlusCircle, UserPlus, Loader2, HardDrive, AlertTriangle, X } from 'lucide-react';
+import { Wallet, Users, PlusCircle, UserPlus, HardDrive, AlertTriangle, X } from 'lucide-react';
 import { CreateGroupModal } from '../components/CreateGroupModal';
 import { ProfileModal } from '../components/ProfileModal';
 import { useToast } from '../context/ToastContext';
 
 export const Home: React.FC = () => {
   const { userName, contacts, addContact, isLocalOnly, authError, clearAuthError } = useAuth();
-  const { groups, createGroup, joinGroup } = useGroup();
+  const { groups, createGroup } = useGroup();
   const navigate = useNavigate();
   const { showToast } = useToast();
 
   const [joinCode, setJoinCode] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
-  const [joining, setJoining] = useState(false);
 
   const handleCreateGroup = async (
     groupName: string,
     participants: { id: string; name: string }[],
+    currency: string,
   ) => {
     try {
-      const id = await createGroup(groupName, participants);
+      const id = await createGroup(groupName, participants, currency);
       setShowCreateModal(false);
       navigate(`/group/${id}`);
     } catch {
@@ -31,30 +31,18 @@ export const Home: React.FC = () => {
     }
   };
 
-  const handleJoinGroup = async (e: React.FormEvent) => {
+  // Joining goes through the group's invite screen, which asks "Which of
+  // these is you?" when the group has name-only members.
+  const handleJoinGroup = (e: React.FormEvent) => {
     e.preventDefault();
     const code = joinCode.trim().toUpperCase();
-    if (!code || joining) return;
-    setJoining(true);
-    const result = await joinGroup(code);
-    setJoining(false);
-    switch (result) {
-      case 'joined':
-        setJoinCode('');
-        navigate(`/group/${code}`);
-        break;
-      case 'not-found':
-        showToast('Group not found — check the code and try again.', 'error');
-        break;
-      case 'offline':
-        showToast("You're offline — connect to the internet to join a group.", 'error');
-        break;
-      case 'unavailable':
-        showToast('Joining groups needs the online version of Splitr (see DEPLOYMENT.md).', 'error');
-        break;
-      default:
-        showToast("Couldn't join the group. Please try again.", 'error');
+    if (!code) return;
+    if (isLocalOnly) {
+      showToast('Joining groups needs the online version of Splitr.', 'error');
+      return;
     }
+    setJoinCode('');
+    navigate(`/group/${code}`);
   };
 
   const totalMembers = (group: { members: string[]; participants?: { id: string; name: string }[] }) =>
@@ -136,10 +124,9 @@ export const Home: React.FC = () => {
             />
             <button
               type="submit"
-              disabled={joining}
+              disabled={!joinCode.trim()}
               className="shrink-0 bg-green-600 text-white px-4 py-2.5 rounded-xl font-medium hover:bg-green-700 transition-colors disabled:opacity-60 flex items-center gap-1.5"
             >
-              {joining && <Loader2 className="w-4 h-4 animate-spin" />}
               Join
             </button>
           </form>

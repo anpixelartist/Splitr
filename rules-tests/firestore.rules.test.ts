@@ -7,8 +7,8 @@ import {
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
 import {
-  arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, query,
-  setDoc, updateDoc, where, writeBatch, type Firestore,
+  arrayUnion, collection, deleteDoc, deleteField, doc, getDoc, getDocs, query,
+  serverTimestamp, setDoc, updateDoc, where, writeBatch, type Firestore,
 } from 'firebase/firestore';
 
 let env: RulesTestEnvironment;
@@ -34,6 +34,11 @@ const expense = (id: string, by: string) => ({
 const settlement = (id: string, by: string) => ({
   id, groupId: GID, from: 'bob', to: 'alice', amount: 15,
   recordedBy: by, createdAt: '2026-01-03T00:00:00.000Z',
+});
+
+// A payment as the app writes it now: with a status and the server's time
+const recorded = (id: string, by: string, status: 'pending' | 'confirmed', to = 'alice') => ({
+  ...settlement(id, by), to, status, recordedAt: serverTimestamp(),
 });
 
 const as = (uid: string): Firestore => env.authenticatedContext(uid).firestore() as unknown as Firestore;
@@ -75,6 +80,16 @@ describe('groups', () => {
       ...baseGroup, id: 'NEW234', members: ['dave'], admins: ['dave'], createdBy: 'dave',
       memberNames: { dave: 'Dave' }, participants: [],
     }));
+  });
+
+  it('stores a currency code with a new group, and never changes it', async () => {
+    const g = (id: string, currency: string) => ({
+      id, name: 'G', members: ['carl'], admins: ['carl'], createdBy: 'carl',
+      memberNames: {}, participants: [], createdAt: '', currency,
+    });
+    await assertSucceeds(setDoc(doc(as('carl'), 'groups', 'CUR234'), g('CUR234', 'INR')));
+    await assertFails(setDoc(doc(as('carl'), 'groups', 'CUR345'), g('CUR345', 'rupees')));
+    await assertFails(updateDoc(doc(as('carl'), 'groups', 'CUR234'), { currency: 'USD' }));
   });
 
   it('cannot overwrite an existing group (code collision)', async () => {
@@ -162,6 +177,51 @@ describe('groups', () => {
   });
 });
 
+describe('claiming a name-only placeholder', () => {
+  const seedClaims = (claims: Record<string, string>) => env.withSecurityRulesDisabled(async ctx => {
+    await updateDoc(doc(ctx.firestore(), 'groups', GID), { claims, participants: [
+      { id: 'p1', name: 'Carol' }, { id: 'p2', name: 'Erin' },
+    ] });
+  });
+
+  it('lets a joiner claim a placeholder as themselves', async () => {
+    await assertSucceeds(updateDoc(doc(as('dave'), 'groups', GID), {
+      members: arrayUnion('dave'), 'memberNames.dave': 'Carol', 'claims.p1': 'dave',
+    }));
+  });
+
+  it('does not let anyone claim on behalf of someone else', async () => {
+    await assertFails(updateDoc(doc(as('dave'), 'groups', GID), {
+      members: arrayUnion('dave'), 'claims.p1': 'bob',
+    }));
+    await assertFails(updateDoc(doc(as('bob'), 'groups', GID), { 'claims.p1': 'alice' }));
+  });
+
+  it('lets a member who joined as a duplicate claim later', async () => {
+    await assertSucceeds(updateDoc(doc(as('bob'), 'groups', GID), { 'claims.p1': 'bob' }));
+  });
+
+  it('never takes over a placeholder someone already claimed', async () => {
+    await seedClaims({ p1: 'alice' });
+    await assertFails(updateDoc(doc(as('bob'), 'groups', GID), { 'claims.p1': 'bob' }));
+  });
+
+  it('allows one claim per member', async () => {
+    await seedClaims({ p1: 'bob' });
+    await assertFails(updateDoc(doc(as('bob'), 'groups', GID), { 'claims.p2': 'bob' }));
+  });
+
+  it('cannot claim another member\'s account', async () => {
+    await assertFails(updateDoc(doc(as('bob'), 'groups', GID), { 'claims.alice': 'bob' }));
+  });
+
+  it('only admins can undo a claim', async () => {
+    await seedClaims({ p1: 'bob' });
+    await assertFails(updateDoc(doc(as('bob'), 'groups', GID), { 'claims.p1': deleteField() }));
+    await assertSucceeds(updateDoc(doc(as('alice'), 'groups', GID), { 'claims.p1': deleteField() }));
+  });
+});
+
 describe('expenses', () => {
   it('are readable by members only', async () => {
     await assertSucceeds(getDocs(collection(as('bob'), 'groups', GID, 'expenses')));
@@ -187,18 +247,42 @@ describe('expenses', () => {
     await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 'x1'), { ...expense('x1', 'bob'), junk: 'x'.repeat(1000) }));
     const { createdAt: _omit, ...noDate } = expense('x2', 'bob');
     await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 'x2'), noDate));
-    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'settlements', 'x3'), { ...settlement('x3', 'bob'), junk: 1 }));
-    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'settlements', 'x4'), { ...settlement('x4', 'bob'), amount: 0.001 }));
+    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'settlements', 'x3'), { ...recorded('x3', 'bob', 'pending'), junk: 1 }));
+    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'settlements', 'x4'), { ...recorded('x4', 'bob', 'pending'), amount: 0.001 }));
     await assertFails(setDoc(doc(as('carl'), 'groups', 'NEW234'), {
       id: 'NEW234', name: 'G', members: ['carl'], admins: ['carl'], createdBy: 'carl',
       memberNames: {}, participants: [], createdAt: '', junk: true,
     }));
   });
 
-  it('cannot be edited, and only admins can delete them', async () => {
-    await assertFails(updateDoc(doc(as('alice'), 'groups', GID, 'expenses', 'e1'), { amount: 1 }));
+  it('only admins can delete them', async () => {
     await assertFails(deleteDoc(doc(as('bob'), 'groups', GID, 'expenses', 'e1')));
     await assertSucceeds(deleteDoc(doc(as('alice'), 'groups', GID, 'expenses', 'e1')));
+  });
+
+  const edit = (uid: string, id: string, changes: Record<string, unknown>) =>
+    updateDoc(doc(as(uid), 'groups', GID, 'expenses', id), { ...changes, editedBy: uid, editedAt: serverTimestamp() });
+
+  it('can be edited by whoever added them, or an admin', async () => {
+    // e1 was added by alice (admin); bob adds e2
+    await assertSucceeds(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 'e2'), expense('e2', 'bob')));
+    await assertSucceeds(edit('bob', 'e2', { amount: 40, splits: [{ userId: 'bob', amount: 40 }] }));
+    await assertSucceeds(edit('alice', 'e2', { description: 'Fixed by admin' }));
+    await assertFails(edit('bob', 'e1', { amount: 1 }));
+  });
+
+  it('keeps who added it and when, and stamps the real editor', async () => {
+    await assertFails(edit('alice', 'e1', { createdBy: 'bob' }));
+    await assertFails(edit('alice', 'e1', { createdAt: '2030-01-01T00:00:00.000Z' }));
+    await assertFails(updateDoc(doc(as('alice'), 'groups', GID, 'expenses', 'e1'),
+      { amount: 20, editedBy: 'bob', editedAt: serverTimestamp() }));
+    await assertFails(updateDoc(doc(as('alice'), 'groups', GID, 'expenses', 'e1'), { amount: 20 }));
+  });
+
+  it('applies the same checks to edits as to new expenses', async () => {
+    await assertFails(edit('alice', 'e1', { amount: -5 }));
+    await assertFails(edit('alice', 'e1', { amount: 30.005 }));
+    await assertFails(edit('alice', 'e1', { junk: 'x' }));
   });
 });
 
@@ -209,13 +293,70 @@ describe('settlements', () => {
   });
 
   it('can be recorded by members as themselves', async () => {
-    await assertSucceeds(setDoc(doc(as('alice'), 'groups', GID, 'settlements', 's2'), settlement('s2', 'alice')));
-    await assertFails(setDoc(doc(as('alice'), 'groups', GID, 'settlements', 's3'), settlement('s3', 'bob')));
-    await assertFails(setDoc(doc(as('dave'), 'groups', GID, 'settlements', 's4'), settlement('s4', 'dave')));
+    await assertSucceeds(setDoc(doc(as('alice'), 'groups', GID, 'settlements', 's2'), recorded('s2', 'alice', 'confirmed')));
+    await assertFails(setDoc(doc(as('alice'), 'groups', GID, 'settlements', 's3'), recorded('s3', 'bob', 'confirmed')));
+    await assertFails(setDoc(doc(as('dave'), 'groups', GID, 'settlements', 's4'), recorded('s4', 'dave', 'pending')));
   });
 
   it('cannot be deleted by non-admins (deleting an expense must not erase payments)', async () => {
     await assertFails(deleteDoc(doc(as('bob'), 'groups', GID, 'settlements', 's1')));
+  });
+});
+
+describe('payment confirmation', () => {
+  const pay = (id: string) => doc(as('alice'), 'groups', GID, 'settlements', id);
+  const seed = (id: string, data: Record<string, unknown>) => env.withSecurityRulesDisabled(async ctx => {
+    await setDoc(doc(ctx.firestore(), 'groups', GID, 'settlements', id), { ...settlement(id, 'bob'), ...data });
+  });
+  const decide = (uid: string, id: string, status: string) =>
+    updateDoc(doc(as(uid), 'groups', GID, 'settlements', id), { status, decidedBy: uid, decidedAt: serverTimestamp() });
+
+  it('confirms at once only when the receiver records it', async () => {
+    await assertSucceeds(setDoc(pay('c1'), recorded('c1', 'alice', 'confirmed')));
+    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'settlements', 'c2'), recorded('c2', 'bob', 'confirmed')));
+    await assertSucceeds(setDoc(doc(as('bob'), 'groups', GID, 'settlements', 'c3'), recorded('c3', 'bob', 'pending')));
+  });
+
+  it('confirms at once a payment to a name-only member, who cannot confirm', async () => {
+    await assertSucceeds(setDoc(doc(as('bob'), 'groups', GID, 'settlements', 'n1'), recorded('n1', 'bob', 'confirmed', 'p1')));
+    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'settlements', 'n2'), recorded('n2', 'bob', 'pending', 'p1')));
+  });
+
+  it('takes the time from the server, so auto-confirm cannot be backdated', async () => {
+    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'settlements', 'b1'),
+      { ...recorded('b1', 'bob', 'pending'), recordedAt: new Date('2020-01-01') }));
+  });
+
+  it('lets only the receiver confirm or reject', async () => {
+    await seed('d1', { status: 'pending' });
+    await seed('d2', { status: 'pending' });
+    await assertFails(decide('bob', 'd1', 'confirmed'));
+    await assertSucceeds(decide('alice', 'd1', 'confirmed'));
+    await assertSucceeds(decide('alice', 'd2', 'rejected'));
+  });
+
+  it('lets the recorder cancel while pending, and the receiver undo once confirmed', async () => {
+    await seed('u1', { status: 'pending' });
+    await assertSucceeds(decide('bob', 'u1', 'cancelled'));
+    // s1 is an older record without a status: it counts as confirmed
+    await assertFails(decide('bob', 's1', 'cancelled'));
+    await assertSucceeds(decide('alice', 's1', 'cancelled'));
+  });
+
+  it('changes nothing but the status, stamped with the real decider', async () => {
+    await seed('m1', { status: 'pending' });
+    await assertFails(updateDoc(doc(as('alice'), 'groups', GID, 'settlements', 'm1'),
+      { status: 'confirmed', decidedBy: 'alice', decidedAt: serverTimestamp(), amount: 1 }));
+    await assertFails(updateDoc(doc(as('alice'), 'groups', GID, 'settlements', 'm1'),
+      { status: 'confirmed', decidedBy: 'bob', decidedAt: serverTimestamp() }));
+  });
+
+  it('lets whoever claimed the receiving placeholder confirm', async () => {
+    await env.withSecurityRulesDisabled(async ctx => {
+      await updateDoc(doc(ctx.firestore(), 'groups', GID), { claims: { p1: 'bob' } });
+    });
+    await seed('k1', { status: 'pending', from: 'alice', to: 'p1', recordedBy: 'alice' });
+    await assertSucceeds(decide('bob', 'k1', 'confirmed'));
   });
 });
 

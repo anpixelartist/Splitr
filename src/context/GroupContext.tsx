@@ -1,14 +1,17 @@
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { db, isFirebaseConfigured } from '../firebase/config';
 import {
   collection, query, where, onSnapshot, doc, getDoc, getDocs,
-  setDoc, updateDoc, deleteDoc, arrayUnion, writeBatch,
+  setDoc, updateDoc, deleteDoc, arrayUnion, writeBatch, deleteField, FieldPath, serverTimestamp,
   type DocumentReference,
 } from 'firebase/firestore';
-import type { Group, Expense, SettlementRecord } from '../types';
+import type { Group, Expense, SettlementRecord, PaymentStatus } from '../types';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { calculateBalances, isSettled, validateExpense } from '../lib/settlement';
+import { applyClaims, resolveId } from '../lib/claims';
+import { initialStatus, countsTowardBalances } from '../lib/payments';
+import { DEFAULT_CURRENCY, currencyDigits } from '../lib/money';
 import { v4 as uuidv4 } from 'uuid';
 
 // ─── Firestore layout ────────────────────────────────────────────────────────
@@ -57,6 +60,30 @@ function lsGetMigrating<T>(scopedKey: string, legacyKey: string): T[] {
   return lsGet<T>(scopedKey);
 }
 
+// Server timestamps arrive as Firestore Timestamps (or null while a local
+// write is pending); keep plain milliseconds in state and localStorage.
+const toMillis = (v: unknown): number | undefined =>
+  v && typeof (v as { toMillis?: unknown }).toMillis === 'function'
+    ? (v as { toMillis: () => number }).toMillis()
+    : typeof v === 'number' ? v : undefined;
+
+const readSettlement = (data: Record<string, unknown>, id: string): SettlementRecord => ({
+  ...(data as unknown as SettlementRecord),
+  id,
+  recordedAt: toMillis(data.recordedAt),
+  decidedAt: toMillis(data.decidedAt),
+});
+
+const readExpense = (data: Record<string, unknown>, id: string): Expense => ({
+  ...(data as unknown as Expense),
+  id,
+  editedAt: toMillis(data.editedAt),
+});
+
+// A deleted expense stays hidden this long before the delete is sent, so it
+// can be undone (re-creating it afterwards would break the create rules).
+export const DELETE_UNDO_MS = 5000;
+
 const byNewest = (a: { createdAt: string }, b: { createdAt: string }) =>
   new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
 
@@ -96,11 +123,22 @@ interface GroupContextType {
   loading: boolean;
   isAdmin: boolean;
   isMember: boolean;
-  createGroup: (name: string, participants?: { id: string; name: string }[]) => Promise<string>;
-  joinGroup: (groupId: string) => Promise<JoinResult>;
+  createGroup: (name: string, participants?: { id: string; name: string }[], currency?: string) => Promise<string>;
+  /** Joins by code; `claimId` = the name-only participant this person says they are. */
+  joinGroup: (groupId: string, claimId?: string) => Promise<JoinResult>;
+  /** For a member who joined as a new person: "that placeholder was me". */
+  claimParticipant: (participantId: string) => Promise<void>;
+  /** Admins: undo a wrong claim. */
+  unlinkClaim: (participantId: string) => Promise<void>;
   addExpense: (expense: Omit<Expense, 'id' | 'createdAt' | 'createdBy'>) => Promise<void>;
+  /** The person who added it, or an admin. Keeps its date and position. */
+  updateExpense: (id: string, changes: Pick<Expense, 'description' | 'amount' | 'paidBy' | 'splits'>) => Promise<void>;
+  /** Hides it now and deletes it after DELETE_UNDO_MS unless undone. */
   deleteExpense: (id: string) => Promise<void>;
+  undoDeleteExpense: (id: string) => void;
   recordSettlements: (transactions: { from: string; to: string; amount: number }[]) => Promise<void>;
+  /** Confirm, reject or undo a recorded payment (who may do what: lib/payments.ts). */
+  decidePayment: (id: string, status: PaymentStatus) => Promise<void>;
   promoteToAdmin: (uid: string) => Promise<void>;
   demoteAdmin: (uid: string) => Promise<void>;
   deleteGroup: () => Promise<void>;
@@ -116,9 +154,14 @@ const GroupContext = createContext<GroupContextType>({
   expenses: [], settlementRecords: [], loading: true, isAdmin: false, isMember: false,
   createGroup: async () => '',
   joinGroup: async () => 'error',
+  claimParticipant: async () => {},
+  unlinkClaim: async () => {},
   addExpense: async () => {},
+  updateExpense: async () => {},
   deleteExpense: async () => {},
+  undoDeleteExpense: () => {},
   recordSettlements: async () => {},
+  decidePayment: async () => {},
   promoteToAdmin: async () => {},
   demoteAdmin: async () => {},
   deleteGroup: async () => {},
@@ -133,7 +176,7 @@ export const useGroup = () => useContext(GroupContext);
 // ─── Provider ────────────────────────────────────────────────────────────────
 
 export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, userName } = useAuth();
+  const { user, userName, hasDefaultName, updateUserName } = useAuth();
   const { showToast } = useToast();
   const uid = user?.uid;
 
@@ -156,6 +199,13 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [membershipSynced, setMembershipSynced] = useState(false);
   // Bumped to re-subscribe after a listener was rejected
   const [listenerRetry, setListenerRetry] = useState(0);
+
+  // Everything below reads expenses and payments with claimed placeholders
+  // resolved to the member who claimed them (see lib/claims.ts).
+  const resolved = useMemo(
+    () => applyClaims(expenses, settlementRecords, currentGroup?.claims),
+    [expenses, settlementRecords, currentGroup?.claims],
+  );
 
   const isAdmin = resolveIsAdmin(currentGroup, uid);
   const isMember = !!currentGroup && !!uid && currentGroup.members.includes(uid);
@@ -286,7 +336,9 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       expensesCol(gid),
       (snapshot) => {
         if (snapshot.empty && snapshot.metadata.fromCache) return;
-        const data = snapshot.docs.map(d => ({ ...d.data(), id: d.id })) as Expense[];
+        const data = snapshot.docs
+          .map(d => readExpense(d.data({ serverTimestamps: 'estimate' }), d.id))
+          .filter(e => !pendingDeletes.current.has(e.id)); // waiting out the Undo window
         data.sort(byNewest);
         setExpenses(data);
         lsSave(expensesLsKey(uid, gid), data);
@@ -298,7 +350,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       settlementsCol(gid),
       (snapshot) => {
         if (snapshot.empty && snapshot.metadata.fromCache) return;
-        const data = snapshot.docs.map(d => ({ ...d.data(), id: d.id })) as SettlementRecord[];
+        const data = snapshot.docs.map(d => readSettlement(d.data({ serverTimestamps: 'estimate' }), d.id));
         data.sort(byNewest);
         setSettlementRecords(data);
         lsSave(settlementsLsKey(uid, gid), data);
@@ -386,6 +438,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const createGroup = async (
     name: string,
     participants: { id: string; name: string }[] = [],
+    currency: string = DEFAULT_CURRENCY,
   ): Promise<string> => {
     if (!user) throw new Error('Must be logged in');
 
@@ -410,6 +463,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       createdBy: user.uid,
       admins: [user.uid],
       memberNames: { [user.uid]: userName },
+      currency,
       createdAt: new Date().toISOString(),
     };
 
@@ -424,7 +478,15 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return groupId;
   };
 
-  const joinGroup = async (rawCode: string): Promise<JoinResult> => {
+  // A claimed placeholder's name becomes the joiner's name if they haven't
+  // chosen one yet ("User a1b2" → "Priya").
+  const adoptParticipantName = (group: Group | null, participantId: string) => {
+    const name = group?.participants?.find(p => p.id === participantId)?.name;
+    if (name && hasDefaultName) updateUserName(name);
+    return name && hasDefaultName ? name : userName;
+  };
+
+  const joinGroup = async (rawCode: string, claimId?: string): Promise<JoinResult> => {
     if (!user) return 'error';
     const groupId = rawCode.trim().toUpperCase();
     if (!groupId) return 'not-found';
@@ -435,12 +497,17 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       const snap = await getDoc(groupDoc(groupId));
       if (!snap.exists()) return 'not-found';
-      if ((snap.data() as Group).members?.includes(user.uid)) return 'joined';
-      // Add member uid + store display name so others can show our name without Firestore reads
-      await updateDoc(groupDoc(groupId), {
-        members: arrayUnion(user.uid),
-        [`memberNames.${user.uid}`]: userName,
-      });
+      const group = { ...snap.data(), id: snap.id } as Group;
+      if (group.members?.includes(user.uid)) return 'joined';
+      const claimable = claimId && group.participants?.some(p => p.id === claimId) && !group.claims?.[claimId];
+      const name = claimable ? adoptParticipantName(group, claimId) : userName;
+      // Add member uid + store display name so others can show our name without Firestore reads.
+      // FieldPath: participant ids are UUIDs, which aren't safe in a dotted string path.
+      await updateDoc(groupDoc(groupId),
+        'members', arrayUnion(user.uid),
+        new FieldPath('memberNames', user.uid), name,
+        ...(claimable ? [new FieldPath('claims', claimId), user.uid] : []),
+      );
       return 'joined';
     } catch (err) {
       console.error('[Splitr] join failed', err);
@@ -453,7 +520,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const gid = currentGroupId;
 
     // Refuse to write an expense that would create or destroy money
-    const problem = validateExpense(expenseData, getUsersInGroup().map(u => u.id));
+    const problem = validateExpense(expenseData, getUsersInGroup().map(u => u.id), currencyDigits(currentGroup?.currency ?? DEFAULT_CURRENCY));
     if (problem) throw new Error(problem);
 
     const newExpense: Expense = {
@@ -481,6 +548,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const gid = currentGroupId;
 
     const now = new Date().toISOString();
+    const members = currentGroup?.members ?? [];
     const newRecords: SettlementRecord[] = transactions.map(t => ({
       id: uuidv4(),
       groupId: gid,
@@ -489,6 +557,8 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       amount: t.amount,
       recordedBy: uid,
       createdAt: now,
+      status: initialStatus(uid, t.to, members),
+      recordedAt: Date.now(), // replaced by the server's time on write
     }));
 
     // 1. Instant local update
@@ -501,24 +571,94 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // 2. Background Firebase sync (one atomic batch)
     remote(() => {
       const batch = writeBatch(db);
-      newRecords.forEach(r => batch.set(doc(settlementsCol(gid), r.id), r));
+      newRecords.forEach(r => batch.set(doc(settlementsCol(gid), r.id), { ...r, recordedAt: serverTimestamp() }));
       return batch.commit();
     }, 'record the settlement');
   };
+
+  const decidePayment = async (id: string, status: PaymentStatus) => {
+    if (!currentGroupId || !uid) return;
+    const gid = currentGroupId;
+    setSettlementRecords(prev => {
+      const updated = prev.map(r => r.id === id ? { ...r, status, decidedBy: uid, decidedAt: Date.now() } : r);
+      lsSave(settlementsLsKey(uid, gid), updated);
+      return updated;
+    });
+    const what = status === 'confirmed' ? 'confirm the payment' : status === 'rejected' ? 'reject the payment' : 'undo the payment';
+    remote(() => updateDoc(doc(settlementsCol(gid), id), { status, decidedBy: uid, decidedAt: serverTimestamp() }), what);
+  };
+
+  const updateExpense = async (
+    id: string,
+    changes: Pick<Expense, 'description' | 'amount' | 'paidBy' | 'splits'>,
+  ) => {
+    if (!currentGroupId || !uid) return;
+    const gid = currentGroupId;
+    const existing = expenses.find(e => e.id === id);
+    if (!existing || (existing.createdBy !== uid && !isAdmin)) throw new Error('Only the person who added this expense or an admin can edit it.');
+    const problem = validateExpense(changes, getUsersInGroup().map(u => u.id), currencyDigits(currentGroup?.currency ?? DEFAULT_CURRENCY));
+    if (problem) throw new Error(problem);
+
+    const editedAt = Date.now();
+    setExpenses(prev => {
+      const updated = prev.map(e => e.id === id ? { ...e, ...changes, editedBy: uid, editedAt } : e);
+      lsSave(expensesLsKey(uid, gid), updated);
+      return updated;
+    });
+    remote(() => updateDoc(doc(expensesCol(gid), id), {
+      ...changes, editedBy: uid, editedAt: serverTimestamp(),
+    }), 'save your changes');
+  };
+
+  const pendingDeletes = useRef(new Map<string, { gid: string; expense: Expense; timer: ReturnType<typeof setTimeout> }>());
+
+  const commitDelete = (id: string) => {
+    const p = pendingDeletes.current.get(id);
+    if (!p) return;
+    clearTimeout(p.timer);
+    pendingDeletes.current.delete(id);
+    remote(() => deleteDoc(doc(expensesCol(p.gid), id)), 'delete the expense');
+  };
+  const commitDeleteRef = useRef(commitDelete);
+  useEffect(() => { commitDeleteRef.current = commitDelete; });
+
+  // Closing or switching away from the app sends any delete still waiting
+  useEffect(() => {
+    const flush = () => {
+      if (document.visibilityState === 'hidden') [...pendingDeletes.current.keys()].forEach(id => commitDeleteRef.current(id));
+    };
+    document.addEventListener('visibilitychange', flush);
+    return () => document.removeEventListener('visibilitychange', flush);
+  }, []);
 
   // Settlement records are deliberately kept: they are money that really
   // changed hands, so balances stay correct after an expense is removed.
   const deleteExpense = async (id: string) => {
     if (!isAdmin || !currentGroupId || !uid) return;
     const gid = currentGroupId;
+    const expense = expenses.find(e => e.id === id);
+    if (!expense) return;
 
     setExpenses(prev => {
       const updated = prev.filter(e => e.id !== id);
       lsSave(expensesLsKey(uid, gid), updated);
       return updated;
     });
+    const timer = setTimeout(() => commitDeleteRef.current(id), DELETE_UNDO_MS);
+    pendingDeletes.current.set(id, { gid, expense, timer });
+  };
 
-    remote(() => deleteDoc(doc(expensesCol(gid), id)), 'delete the expense');
+  const undoDeleteExpense = (id: string) => {
+    const p = pendingDeletes.current.get(id);
+    if (!p || !uid) return;
+    clearTimeout(p.timer);
+    pendingDeletes.current.delete(id);
+    if (p.gid !== currentGroupId) return;
+    setExpenses(prev => {
+      const updated = [p.expense, ...prev.filter(e => e.id !== id)].sort(byNewest);
+      lsSave(expensesLsKey(uid, p.gid), updated);
+      return updated;
+    });
   };
 
   const promoteToAdmin = async (memberUid: string) => {
@@ -541,9 +681,27 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     remote(() => updateDoc(groupDoc(currentGroup.id), { admins }), 'update admins');
   };
 
+  const claimParticipant = async (participantId: string) => {
+    if (!currentGroup || !uid || !isMember) return;
+    if (currentGroup.claims?.[participantId]) return;
+    if (Object.values(currentGroup.claims ?? {}).includes(uid)) return; // one claim per member
+    updateGroupLocally({ ...currentGroup, claims: { ...currentGroup.claims, [participantId]: uid } });
+    adoptParticipantName(currentGroup, participantId);
+    remote(() => updateDoc(groupDoc(currentGroup.id), new FieldPath('claims', participantId), uid), 'link your name');
+  };
+
+  const unlinkClaim = async (participantId: string) => {
+    if (!currentGroup || !isAdmin) return;
+    const claims = { ...currentGroup.claims };
+    delete claims[participantId];
+    updateGroupLocally({ ...currentGroup, claims });
+    remote(() => updateDoc(groupDoc(currentGroup.id), new FieldPath('claims', participantId), deleteField()), 'unlink the name');
+  };
+
   const leaveGroup = async (): Promise<boolean> => {
     if (!currentGroup || !uid) return false;
-    const myBalance = calculateBalances(expenses, settlementRecords)[uid]?.netBalance ?? 0;
+    const counted = resolved.settlements.filter(r => countsTowardBalances(r));
+    const myBalance = calculateBalances(resolved.expenses, counted)[uid]?.netBalance ?? 0;
     if (!isSettled(myBalance)) return false;
 
     const gid = currentGroup.id;
@@ -593,10 +751,13 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         : currentGroup.memberNames?.[m] ?? `Member ${m.substring(0, 4)}`,
     }));
 
-    return [...memberUsers, ...(currentGroup.participants ?? [])];
+    // A claimed placeholder is now that member, so it isn't listed twice
+    const unclaimed = (currentGroup.participants ?? []).filter(p => !currentGroup.claims?.[p.id]);
+    return [...memberUsers, ...unclaimed];
   }, [currentGroup, uid, userName]);
 
-  const getMemberName = useCallback((id: string): string => {
+  const getMemberName = useCallback((rawId: string): string => {
+    const id = resolveId(currentGroup?.claims, rawId);
     if (id === uid) return userName;
     return currentGroup?.memberNames?.[id]
       ?? currentGroup?.participants?.find(p => p.id === id)?.name
@@ -606,9 +767,10 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   return (
     <GroupContext.Provider value={{
       groups, currentGroup, currentGroupStatus, setCurrentGroupId,
-      expenses, settlementRecords, loading, isAdmin, isMember,
-      createGroup, joinGroup,
-      addExpense, deleteExpense, recordSettlements,
+      expenses: resolved.expenses, settlementRecords: resolved.settlements,
+      loading, isAdmin, isMember,
+      createGroup, joinGroup, claimParticipant, unlinkClaim,
+      addExpense, updateExpense, deleteExpense, undoDeleteExpense, recordSettlements, decidePayment,
       promoteToAdmin, demoteAdmin, deleteGroup, leaveGroup,
       getUsersInGroup, getMemberName,
     }}>

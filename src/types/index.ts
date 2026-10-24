@@ -16,6 +16,8 @@ export type Group = {
   createdBy?: string;                            // Firebase UID of the creator (admin by default)
   admins?: string[];                             // Firebase UIDs with admin privileges
   memberNames?: Record<string, string>;          // uid → display name cache (no Firestore read needed)
+  claims?: Record<string, string>;
+  currency?: string;                             // ISO 4217 code, chosen at creation (older groups: USD)               // participant id → uid of the member who said "that's me"
   createdAt: string;
 };
 
@@ -33,6 +35,8 @@ export type Expense = {
   splits: Split[];
   createdBy?: string;   // Firebase UID of whoever added this expense
   createdAt: string;
+  editedBy?: string;    // who last edited it
+  editedAt?: number;    // ms, server time
 };
 
 export type Balance = {
@@ -54,4 +58,11 @@ export type SettlementRecord = {
   amount: number;
   recordedBy?: string; // UID of whoever tapped "settle"
   createdAt: string;
+  // Confirmation by the receiver (absent on older records = confirmed)
+  status?: PaymentStatus;
+  recordedAt?: number;  // ms, server time: the 7-day auto-confirm counts from here
+  decidedBy?: string;   // who last changed the status
+  decidedAt?: number;   // ms, server time
 };
+
+export type PaymentStatus = 'pending' | 'confirmed' | 'rejected' | 'cancelled';
