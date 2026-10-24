@@ -2,8 +2,11 @@ name: Deploy
 
 # Every push to main that passes CI goes live on Firebase Hosting, together
 # with the Firestore security rules. One-time setup is in DEPLOYMENT.md
-# ("Automatic deploys"): a FIREBASE_SERVICE_ACCOUNT secret and the six
-# VITE_FIREBASE_* repository variables.
+# ("Automatic deploys"): seven repository secrets.
+#
+# The repo is public and so are these logs. The project ID is the app's
+# address (<project>.web.app), so it only ever comes from secrets, which
+# GitHub masks as *** in the logs; no URL is written here.
 
 on:
   push:
@@ -22,16 +25,14 @@ jobs:
   deploy:
     needs: ci
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://splitr-bills.web.app
+    environment: production
     env:
-      VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
-      VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
-      VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
-      VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET }}
-      VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID }}
-      VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
+      VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+      VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+      VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+      VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+      VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+      VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -49,7 +50,7 @@ jobs:
           missing=0
           for v in VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN VITE_FIREBASE_PROJECT_ID \
                    VITE_FIREBASE_STORAGE_BUCKET VITE_FIREBASE_MESSAGING_SENDER_ID VITE_FIREBASE_APP_ID; do
-            if [ -z "${!v}" ]; then echo "::error::Repository variable $v is not set"; missing=1; fi
+            if [ -z "${!v}" ]; then echo "::error::Repository secret $v is not set"; missing=1; fi
           done
           if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then echo "::error::Secret FIREBASE_SERVICE_ACCOUNT is not set"; missing=1; fi
           exit $missing
@@ -63,6 +64,6 @@ jobs:
           key="$RUNNER_TEMP/firebase-sa.json"
           printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$key"
           GOOGLE_APPLICATION_CREDENTIALS="$key" npx firebase-tools@15 deploy \
-            --only hosting,firestore --project splitr-bills --non-interactive \
+            --only hosting,firestore --project "$VITE_FIREBASE_PROJECT_ID" --non-interactive \
             --message "Deploy ${GITHUB_SHA::7}"
           rm -f "$key"

@@ -33,3 +33,7 @@ dev-dist/
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
+
+# Names the Firebase project, which is also the app's address (<project>.web.app).
+# Kept out of this public repo; create it locally with: npx firebase-tools@15 use --add
+.firebaserc
