@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Wallet, WifiOff } from 'lucide-react';
+import { Wallet, ArrowRight, UserPlus } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export const LoginPage: React.FC = () => {
@@ -31,6 +32,9 @@ export const LoginPage: React.FC = () => {
 
   const shownError = error ?? authError;
 
+  // Opened from an invite link (/group/CODE): say so before asking to sign in
+  const inviteCode = useLocation().pathname.match(/^\/group\/([A-Za-z0-9]{4,12})$/)?.[1]?.toUpperCase();
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-6">
       <div className="w-full max-w-sm">
@@ -43,6 +47,18 @@ export const LoginPage: React.FC = () => {
           <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight">Splitr</h1>
           <p className="text-gray-500 mt-2 text-center">Split group expenses fairly,<br />settle up instantly.</p>
         </div>
+
+        {inviteCode && (
+          <div className="anim-fade-in -mt-4 mb-6 bg-surface border border-green-200 rounded-2xl p-4 flex items-start gap-3 shadow-sm">
+            <UserPlus className="w-5 h-5 text-green-600 dark:text-green-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-gray-900">You've been invited to a group</p>
+              <p className="text-sm text-gray-500 mt-0.5">
+                Sign in or try without signing in, and you'll join group <span className="font-mono font-semibold text-gray-700">{inviteCode}</span> next.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Card */}
         <div className="bg-surface rounded-2xl shadow-xl p-6 space-y-4">
@@ -91,9 +107,9 @@ export const LoginPage: React.FC = () => {
             {offlineLoading ? (
               <span className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
             ) : (
-              <WifiOff className="w-4 h-4" />
+              <ArrowRight className="w-4 h-4" />
             )}
-            {offlineLoading ? 'Starting…' : 'Continue without account'}
+            {offlineLoading ? 'Starting…' : 'Try without signing in'}
           </button>
         </div>
 
@@ -102,7 +118,7 @@ export const LoginPage: React.FC = () => {
           {isLocalOnly ? (
             <>Running in local-only mode: data stays in this browser.</>
           ) : (
-            <>Without an account, your data lives on this device only.
+            <>Without signing in, your profile stays on this device.
             <br />Sign in with Google to use Splitr on all your devices.</>
           )}
         </p>

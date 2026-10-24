@@ -249,7 +249,7 @@ export const GroupDetails: React.FC = () => {
         </div>
       </header>
 
-      <main className="flex-1 p-4 lg:p-8 pb-[calc(6rem+env(safe-area-inset-bottom))] lg:pb-28">
+      <main className="flex-1 p-4 lg:p-8">
         <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-8 lg:items-start">
           {/* Phones show one tab at a time; laptops show both columns */}
           <div className={`space-y-3 ${activeTab === 'expenses' ? '' : 'hidden'} lg:block`}>
@@ -275,7 +275,7 @@ export const GroupDetails: React.FC = () => {
             )}
 
             {isAdmin && expenses.length > 0 && !isGroupSettled && (
-              <p className="text-xs text-center text-gray-400">Tap the trash icon to delete an expense</p>
+              <p className="text-xs text-center text-gray-400">Use the trash icon to delete an expense</p>
             )}
 
             {expenses.length === 0 ? (
@@ -513,7 +513,7 @@ export const GroupDetails: React.FC = () => {
                             </span>
                           )}
                           {!memberIsFirebase && (
-                            <span className="text-xs text-gray-400 border border-gray-200 rounded px-1">offline</span>
+                            <span className="text-xs text-gray-400 border border-gray-200 rounded px-1 whitespace-nowrap">not on Splitr yet</span>
                           )}
                         </div>
                         <p className="text-xs text-gray-400 mt-0.5">
@@ -555,11 +555,12 @@ export const GroupDetails: React.FC = () => {
         </div>
       </main>
 
-      {/* Add Expense FAB */}
-      <div className="fixed bottom-[calc(1.5rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 lg:left-auto lg:translate-x-0 lg:right-[max(2rem,calc((100vw-64rem)/2+2rem))] z-20">
+      {/* Add Expense bar: takes real space at the end of the page and sticks to
+          the bottom while scrolling, so it can never cover the last rows */}
+      <div className="sticky bottom-0 z-20 bg-gray-50/90 backdrop-blur border-t px-4 lg:px-8 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex justify-center lg:justify-end">
         <button
           onClick={() => setIsAddExpenseOpen(true)}
-          className="bg-blue-600 text-white px-6 py-4 rounded-full shadow-lg shadow-blue-200 flex items-center gap-2 whitespace-nowrap font-bold text-lg hover:bg-blue-700 transition-transform active:scale-95"
+          className="bg-blue-600 text-white px-6 py-3.5 rounded-full shadow-lg shadow-blue-200 flex items-center gap-2 whitespace-nowrap font-bold text-lg hover:bg-blue-700 transition-transform active:scale-95"
         >
           <Plus className="w-6 h-6" /> Add Expense
         </button>

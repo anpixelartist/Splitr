@@ -192,7 +192,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
             ) : (
               <div className="space-y-3">
                 <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
-                  <p className="text-sm text-gray-600">Your data is saved on <strong>this device</strong> only.</p>
+                  <p className="text-sm text-gray-600">You're using Splitr as a <strong>guest</strong>. Your groups sync with friends, but this guest profile lives only on this device.</p>
                   <p className="text-xs text-gray-400 mt-0.5">Sign in with Google to use it on all your devices — your groups come with you.</p>
                 </div>
                 {(googleError ?? authError) && (
