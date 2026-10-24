@@ -48,12 +48,12 @@ firebase.json               hosting + rules + emulator config
 
 ```
 users/{uid}                          { name, contacts[] }
-groups/{code}                        { name, members[], admins[], memberNames{}, participants[], createdBy }
+groups/{code}                        { name, members[], admins[], memberNames{}, participants[], claims{}, createdBy }
 groups/{code}/expenses/{id}          { description, amount, paidBy, splits[], createdBy, createdAt }
 groups/{code}/settlements/{id}       { from, to, amount, recordedBy, createdAt }
 ```
 
-The group code doubles as the invite: any signed-in user can look up a group by its exact code and join it. Expenses and settlements are visible to members only. Expenses can't be edited; admins delete wrong ones. Recorded payments are never removed by deleting an expense, because they're money that really changed hands.
+The group code doubles as the invite: any signed-in user can look up a group by its exact code and join it. Expenses and settlements are visible to members only. Expenses can't be edited; admins delete wrong ones. When someone joins, they can claim a name-only participant ("that's me"): `claims` maps participant id to their uid and every balance is read through it, so no expense is rewritten. Admins can undo a claim. Recorded payments are never removed by deleting an expense, because they're money that really changed hands.
 
 ## License
 

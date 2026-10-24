@@ -28,6 +28,8 @@ interface AuthContextType {
   isLocalOnly: boolean;
   updateUserName: (name: string) => Promise<void>;
   userName: string;
+  /** Still an auto-generated name like "User a1b2": ask the person for theirs. */
+  hasDefaultName: boolean;
   contacts: Contact[];
   addContact: (name: string) => Promise<Contact>;
   updateContact: (id: string, name: string) => Promise<void>;
@@ -42,7 +44,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType>({
   user: null, loading: true, isGoogleUser: false, isLocalOnly: !isFirebaseConfigured,
   updateUserName: async () => {},
-  userName: '', contacts: [],
+  userName: '', hasDefaultName: false, contacts: [],
   addContact: async () => ({ id: '', name: '' }),
   updateContact: async () => {},
   removeContact: async () => {},
@@ -356,7 +358,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   return (
     <AuthContext.Provider value={{
       user, loading, isGoogleUser, isLocalOnly: !isFirebaseConfigured,
-      updateUserName, userName,
+      updateUserName, userName, hasDefaultName: !!user && isDefaultName(userName),
       contacts, addContact, updateContact, removeContact,
       signInWithGoogle, signOut, continueOffline, authError,
       clearAuthError: () => setAuthError(null),

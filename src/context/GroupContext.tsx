@@ -1,14 +1,15 @@
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { db, isFirebaseConfigured } from '../firebase/config';
 import {
   collection, query, where, onSnapshot, doc, getDoc, getDocs,
-  setDoc, updateDoc, deleteDoc, arrayUnion, writeBatch,
+  setDoc, updateDoc, deleteDoc, arrayUnion, writeBatch, deleteField, FieldPath,
   type DocumentReference,
 } from 'firebase/firestore';
 import type { Group, Expense, SettlementRecord } from '../types';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { calculateBalances, isSettled, validateExpense } from '../lib/settlement';
+import { applyClaims, resolveId } from '../lib/claims';
 import { v4 as uuidv4 } from 'uuid';
 
 // ─── Firestore layout ────────────────────────────────────────────────────────
@@ -97,7 +98,12 @@ interface GroupContextType {
   isAdmin: boolean;
   isMember: boolean;
   createGroup: (name: string, participants?: { id: string; name: string }[]) => Promise<string>;
-  joinGroup: (groupId: string) => Promise<JoinResult>;
+  /** Joins by code; `claimId` = the name-only participant this person says they are. */
+  joinGroup: (groupId: string, claimId?: string) => Promise<JoinResult>;
+  /** For a member who joined as a new person: "that placeholder was me". */
+  claimParticipant: (participantId: string) => Promise<void>;
+  /** Admins: undo a wrong claim. */
+  unlinkClaim: (participantId: string) => Promise<void>;
   addExpense: (expense: Omit<Expense, 'id' | 'createdAt' | 'createdBy'>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   recordSettlements: (transactions: { from: string; to: string; amount: number }[]) => Promise<void>;
@@ -116,6 +122,8 @@ const GroupContext = createContext<GroupContextType>({
   expenses: [], settlementRecords: [], loading: true, isAdmin: false, isMember: false,
   createGroup: async () => '',
   joinGroup: async () => 'error',
+  claimParticipant: async () => {},
+  unlinkClaim: async () => {},
   addExpense: async () => {},
   deleteExpense: async () => {},
   recordSettlements: async () => {},
@@ -133,7 +141,7 @@ export const useGroup = () => useContext(GroupContext);
 // ─── Provider ────────────────────────────────────────────────────────────────
 
 export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, userName } = useAuth();
+  const { user, userName, hasDefaultName, updateUserName } = useAuth();
   const { showToast } = useToast();
   const uid = user?.uid;
 
@@ -156,6 +164,13 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [membershipSynced, setMembershipSynced] = useState(false);
   // Bumped to re-subscribe after a listener was rejected
   const [listenerRetry, setListenerRetry] = useState(0);
+
+  // Everything below reads expenses and payments with claimed placeholders
+  // resolved to the member who claimed them (see lib/claims.ts).
+  const resolved = useMemo(
+    () => applyClaims(expenses, settlementRecords, currentGroup?.claims),
+    [expenses, settlementRecords, currentGroup?.claims],
+  );
 
   const isAdmin = resolveIsAdmin(currentGroup, uid);
   const isMember = !!currentGroup && !!uid && currentGroup.members.includes(uid);
@@ -424,7 +439,15 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return groupId;
   };
 
-  const joinGroup = async (rawCode: string): Promise<JoinResult> => {
+  // A claimed placeholder's name becomes the joiner's name if they haven't
+  // chosen one yet ("User a1b2" → "Priya").
+  const adoptParticipantName = (group: Group | null, participantId: string) => {
+    const name = group?.participants?.find(p => p.id === participantId)?.name;
+    if (name && hasDefaultName) updateUserName(name);
+    return name && hasDefaultName ? name : userName;
+  };
+
+  const joinGroup = async (rawCode: string, claimId?: string): Promise<JoinResult> => {
     if (!user) return 'error';
     const groupId = rawCode.trim().toUpperCase();
     if (!groupId) return 'not-found';
@@ -435,12 +458,17 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       const snap = await getDoc(groupDoc(groupId));
       if (!snap.exists()) return 'not-found';
-      if ((snap.data() as Group).members?.includes(user.uid)) return 'joined';
-      // Add member uid + store display name so others can show our name without Firestore reads
-      await updateDoc(groupDoc(groupId), {
-        members: arrayUnion(user.uid),
-        [`memberNames.${user.uid}`]: userName,
-      });
+      const group = { ...snap.data(), id: snap.id } as Group;
+      if (group.members?.includes(user.uid)) return 'joined';
+      const claimable = claimId && group.participants?.some(p => p.id === claimId) && !group.claims?.[claimId];
+      const name = claimable ? adoptParticipantName(group, claimId) : userName;
+      // Add member uid + store display name so others can show our name without Firestore reads.
+      // FieldPath: participant ids are UUIDs, which aren't safe in a dotted string path.
+      await updateDoc(groupDoc(groupId),
+        'members', arrayUnion(user.uid),
+        new FieldPath('memberNames', user.uid), name,
+        ...(claimable ? [new FieldPath('claims', claimId), user.uid] : []),
+      );
       return 'joined';
     } catch (err) {
       console.error('[Splitr] join failed', err);
@@ -541,9 +569,26 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     remote(() => updateDoc(groupDoc(currentGroup.id), { admins }), 'update admins');
   };
 
+  const claimParticipant = async (participantId: string) => {
+    if (!currentGroup || !uid || !isMember) return;
+    if (currentGroup.claims?.[participantId]) return;
+    if (Object.values(currentGroup.claims ?? {}).includes(uid)) return; // one claim per member
+    updateGroupLocally({ ...currentGroup, claims: { ...currentGroup.claims, [participantId]: uid } });
+    adoptParticipantName(currentGroup, participantId);
+    remote(() => updateDoc(groupDoc(currentGroup.id), new FieldPath('claims', participantId), uid), 'link your name');
+  };
+
+  const unlinkClaim = async (participantId: string) => {
+    if (!currentGroup || !isAdmin) return;
+    const claims = { ...currentGroup.claims };
+    delete claims[participantId];
+    updateGroupLocally({ ...currentGroup, claims });
+    remote(() => updateDoc(groupDoc(currentGroup.id), new FieldPath('claims', participantId), deleteField()), 'unlink the name');
+  };
+
   const leaveGroup = async (): Promise<boolean> => {
     if (!currentGroup || !uid) return false;
-    const myBalance = calculateBalances(expenses, settlementRecords)[uid]?.netBalance ?? 0;
+    const myBalance = calculateBalances(resolved.expenses, resolved.settlements)[uid]?.netBalance ?? 0;
     if (!isSettled(myBalance)) return false;
 
     const gid = currentGroup.id;
@@ -593,10 +638,13 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         : currentGroup.memberNames?.[m] ?? `Member ${m.substring(0, 4)}`,
     }));
 
-    return [...memberUsers, ...(currentGroup.participants ?? [])];
+    // A claimed placeholder is now that member, so it isn't listed twice
+    const unclaimed = (currentGroup.participants ?? []).filter(p => !currentGroup.claims?.[p.id]);
+    return [...memberUsers, ...unclaimed];
   }, [currentGroup, uid, userName]);
 
-  const getMemberName = useCallback((id: string): string => {
+  const getMemberName = useCallback((rawId: string): string => {
+    const id = resolveId(currentGroup?.claims, rawId);
     if (id === uid) return userName;
     return currentGroup?.memberNames?.[id]
       ?? currentGroup?.participants?.find(p => p.id === id)?.name
@@ -606,8 +654,9 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   return (
     <GroupContext.Provider value={{
       groups, currentGroup, currentGroupStatus, setCurrentGroupId,
-      expenses, settlementRecords, loading, isAdmin, isMember,
-      createGroup, joinGroup,
+      expenses: resolved.expenses, settlementRecords: resolved.settlements,
+      loading, isAdmin, isMember,
+      createGroup, joinGroup, claimParticipant, unlinkClaim,
       addExpense, deleteExpense, recordSettlements,
       promoteToAdmin, demoteAdmin, deleteGroup, leaveGroup,
       getUsersInGroup, getMemberName,

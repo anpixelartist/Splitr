@@ -7,6 +7,7 @@ import { calculateBalances, calculateSettlements, isSettled } from '../lib/settl
 import { AddExpenseModal } from '../components/AddExpenseModal';
 import { SettleModal } from '../components/SettleModal';
 import { useToast } from '../context/ToastContext';
+import { unclaimedParticipants, claimedBy } from '../lib/claims';
 
 export const GroupDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -29,6 +30,8 @@ export const GroupDetails: React.FC = () => {
     demoteAdmin,
     deleteGroup,
     leaveGroup,
+    claimParticipant,
+    unlinkClaim,
   } = useGroup();
 
   const { showToast } = useToast();
@@ -41,6 +44,12 @@ export const GroupDetails: React.FC = () => {
   const [showHistory, setShowHistory] = useState(false);
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [joining, setJoining] = useState(false);
+  // Joining: which name-only placeholder this person is ('new' = none of them)
+  const [claimChoice, setClaimChoice] = useState<string | null>(null);
+  const claimDismissKey = `splitr_claim_dismissed_${id}_${user?.uid}`;
+  const [claimBannerDismissed, setClaimBannerDismissed] = useState(() => {
+    try { return localStorage.getItem(claimDismissKey) === '1'; } catch { return false; }
+  });
 
   useEffect(() => {
     if (id) setCurrentGroupId(id);
@@ -117,12 +126,31 @@ export const GroupDetails: React.FC = () => {
   const handleJoin = async () => {
     if (!id) return;
     setJoining(true);
-    const result = await joinGroup(id);
+    const result = await joinGroup(id, claimChoice && claimChoice !== 'new' ? claimChoice : undefined);
     setJoining(false);
     if (result === 'joined') showToast(`Joined ${currentGroup?.name ?? 'group'}`);
     else if (result === 'offline') showToast("You're offline — connect to join this group.", 'error');
     else if (result === 'not-found') showToast('This group no longer exists.', 'error');
     else showToast("Couldn't join the group. Please try again.", 'error');
+  };
+
+  const handleClaim = async (p: { id: string; name: string }) => {
+    const bal = balances[p.id]?.netBalance ?? 0;
+    const money = bal === 0 ? '' : `, including what ${p.name} ${bal < 0 ? 'owes' : 'is owed'} ($${Math.abs(bal).toFixed(2)})`;
+    if (!window.confirm(`Take over ${p.name}'s place in this group${money}?\n\nAn admin can undo this.`)) return;
+    await claimParticipant(p.id);
+    showToast(`You're now ${p.name} in this group`);
+  };
+
+  const dismissClaimBanner = () => {
+    setClaimBannerDismissed(true);
+    try { localStorage.setItem(claimDismissKey, '1'); } catch { /* ignore */ }
+  };
+
+  const handleUnlink = async (memberName: string, participantId: string, participantName: string) => {
+    if (!window.confirm(`Unlink ${memberName} from "${participantName}"?\n\n${participantName}'s share of past expenses goes back to the name-only entry.`)) return;
+    await unlinkClaim(participantId);
+    showToast(`${memberName} is no longer linked to ${participantName}`);
   };
 
   const handleDeleteExpense = async (expenseId: string) => {
@@ -180,6 +208,7 @@ export const GroupDetails: React.FC = () => {
   }
 
   // Visiting a shared link for a group you haven't joined yet
+  const joinChoices = unclaimedParticipants(currentGroup.participants, currentGroup.claims);
   if (!isMember) {
     return (
       <div className="max-w-md mx-auto min-h-screen flex flex-col items-center justify-center p-8 text-center">
@@ -189,12 +218,39 @@ export const GroupDetails: React.FC = () => {
         <p className="text-sm text-gray-500 mb-1">You've been invited to</p>
         <h1 className="text-2xl font-bold text-gray-900 mb-1">{currentGroup.name}</h1>
         <p className="text-sm text-gray-400 mb-6">
-          {currentGroup.members.length + (currentGroup.participants?.length ?? 0)} members · code{' '}
+          {currentGroup.members.length + joinChoices.length} members · code{' '}
           <span className="font-mono">{currentGroup.id}</span>
         </p>
+        {joinChoices.length > 0 && (
+          <div className="w-full text-left mb-5">
+            <p className="font-semibold text-gray-900">Which of these is you?</p>
+            <p className="text-xs text-gray-500 mt-0.5 mb-3">
+              Friends may have added you by name before you joined. Pick yourself so your share of past expenses becomes yours.
+            </p>
+            <div className="space-y-2" role="radiogroup" aria-label="Which of these is you?">
+              {[...joinChoices, { id: 'new', name: "I'm not on this list" }].map(p => (
+                <label
+                  key={p.id}
+                  className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                    claimChoice === p.id ? 'border-green-500 bg-green-50' : 'bg-surface hover:bg-gray-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="claim"
+                    className="w-4 h-4 accent-green-600"
+                    checked={claimChoice === p.id}
+                    onChange={() => setClaimChoice(p.id)}
+                  />
+                  <span className={p.id === 'new' ? 'text-gray-600' : 'font-medium text-gray-800'}>{p.name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
         <button
           onClick={handleJoin}
-          disabled={joining}
+          disabled={joining || (joinChoices.length > 0 && !claimChoice)}
           className="w-full bg-green-600 text-white py-3 rounded-xl font-semibold hover:bg-green-700 disabled:opacity-60 flex items-center justify-center gap-2"
         >
           {joining && <Loader2 className="w-5 h-5 animate-spin" />}
@@ -250,6 +306,36 @@ export const GroupDetails: React.FC = () => {
       </header>
 
       <main className="flex-1 p-4 lg:p-8">
+        {/* Joined as a new person while a placeholder with your name exists */}
+        {(() => {
+          const choices = unclaimedParticipants(currentGroup.participants, currentGroup.claims);
+          const show = !claimBannerDismissed && choices.length > 0
+            && currentGroup.createdBy !== user?.uid // the creator added these names
+            && !claimedBy(currentGroup.claims, user?.uid ?? '');
+          if (!show) return null;
+          return (
+            <div className="anim-fade-in mb-4 bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <p className="font-semibold text-gray-900">Are you one of these people?</p>
+              <p className="text-sm text-gray-600 mt-0.5">
+                They were added by name before you joined. Picking yourself moves their share of expenses to you.
+              </p>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {choices.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => handleClaim(p)}
+                    className="px-3 py-1.5 rounded-lg bg-surface border border-blue-200 text-sm font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-100"
+                  >
+                    I'm {p.name}
+                  </button>
+                ))}
+                <button onClick={dismissClaimBanner} className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700">
+                  None of these
+                </button>
+              </div>
+            </div>
+          );
+        })()}
         <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-8 lg:items-start">
           {/* Phones show one tab at a time; laptops show both columns */}
           <div className={`space-y-3 ${activeTab === 'expenses' ? '' : 'hidden'} lg:block`}>
@@ -333,7 +419,7 @@ export const GroupDetails: React.FC = () => {
                       </div>
                     </div>
                     <div className="text-sm text-gray-500 flex justify-between items-center">
-                      <span>Paid by {getUserName(expense.paidBy)}</span>
+                      <span>Paid by {expense.paidBy === user?.uid ? 'you' : getUserName(expense.paidBy)}</span>
                       <span>{new Date(expense.createdAt).toLocaleDateString()}</span>
                     </div>
                     {expense.createdBy && expense.createdBy !== expense.paidBy && (
@@ -496,6 +582,8 @@ export const GroupDetails: React.FC = () => {
                   const isMe = u.id === user?.uid;
                   const isLastAdmin = memberIsAdmin && (currentGroup.admins?.length ?? 0) <= 1;
                   const bal = balances[u.id]?.netBalance || 0;
+                  const claimedId = memberIsFirebase ? claimedBy(currentGroup.claims, u.id) : undefined;
+                  const claimedName = claimedId && currentGroup.participants?.find(p => p.id === claimedId)?.name;
 
                   return (
                     <div key={u.id} className="p-3 flex items-center gap-3">
@@ -515,6 +603,9 @@ export const GroupDetails: React.FC = () => {
                           {!memberIsFirebase && (
                             <span className="text-xs text-gray-400 border border-gray-200 rounded px-1 whitespace-nowrap">not on Splitr yet</span>
                           )}
+                          {claimedName && claimedName !== u.name && (
+                            <span className="text-xs text-gray-400 whitespace-nowrap">was “{claimedName}”</span>
+                          )}
                         </div>
                         <p className="text-xs text-gray-400 mt-0.5">
                           {bal === 0 ? 'Settled' : (
@@ -524,6 +615,15 @@ export const GroupDetails: React.FC = () => {
                           )}
                         </p>
                       </div>
+                      {isAdmin && claimedId && claimedName && (
+                        <button
+                          onClick={() => handleUnlink(u.name, claimedId, claimedName)}
+                          className="text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 shrink-0"
+                          title={`Undo: ${u.name} is not ${claimedName}`}
+                        >
+                          Unlink
+                        </button>
+                      )}
                       {isAdmin && memberIsFirebase && !isMe && (
                         <button
                           onClick={async () => {

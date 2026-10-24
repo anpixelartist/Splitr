@@ -16,6 +16,7 @@ export type Group = {
   createdBy?: string;                            // Firebase UID of the creator (admin by default)
   admins?: string[];                             // Firebase UIDs with admin privileges
   memberNames?: Record<string, string>;          // uid → display name cache (no Firestore read needed)
+  claims?: Record<string, string>;               // participant id → uid of the member who said "that's me"
   createdAt: string;
 };
 
