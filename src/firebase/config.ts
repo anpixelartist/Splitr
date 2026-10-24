@@ -46,8 +46,11 @@ const db = initializeFirestore(app, {
 });
 
 if (useEmulators) {
-  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-  connectFirestoreEmulator(db, '127.0.0.1', 8080);
+  // Same host the page came from, so a phone on the LAN (`npm run dev -- --host`)
+  // reaches the emulators on the dev machine too.
+  const host = window.location.hostname || '127.0.0.1';
+  connectAuthEmulator(auth, `http://${host}:9099`, { disableWarnings: true });
+  connectFirestoreEmulator(db, host, 8080);
 }
 
 export { app, auth, db };
