@@ -55,4 +55,11 @@ export type SettlementRecord = {
   amount: number;
   recordedBy?: string; // UID of whoever tapped "settle"
   createdAt: string;
+  // Confirmation by the receiver (absent on older records = confirmed)
+  status?: PaymentStatus;
+  recordedAt?: number;  // ms, server time: the 7-day auto-confirm counts from here
+  decidedBy?: string;   // who last changed the status
+  decidedAt?: number;   // ms, server time
 };
+
+export type PaymentStatus = 'pending' | 'confirmed' | 'rejected' | 'cancelled';

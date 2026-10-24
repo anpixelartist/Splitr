@@ -8,6 +8,8 @@ import { AddExpenseModal } from '../components/AddExpenseModal';
 import { SettleModal } from '../components/SettleModal';
 import { useToast } from '../context/ToastContext';
 import { unclaimedParticipants, claimedBy } from '../lib/claims';
+import { effectiveStatus, allowedActions, countsTowardBalances } from '../lib/payments';
+import type { PaymentStatus, SettlementRecord } from '../types';
 
 export const GroupDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -26,6 +28,7 @@ export const GroupDetails: React.FC = () => {
     isAdmin,
     deleteExpense,
     recordSettlements,
+    decidePayment,
     promoteToAdmin,
     demoteAdmin,
     deleteGroup,
@@ -59,18 +62,29 @@ export const GroupDetails: React.FC = () => {
   // getUsersInGroup is now synchronous — reads from group.memberNames, no Firestore
   const groupUsers = useMemo(() => getUsersInGroup(), [getUsersInGroup]);
 
+  // Only payments the receiver confirmed (or auto-confirmed after 7 days)
+  // move balances; pending ones are listed separately.
+  const confirmedPayments = useMemo(
+    () => settlementRecords.filter(r => countsTowardBalances(r)),
+    [settlementRecords],
+  );
+  const pendingPayments = useMemo(
+    () => settlementRecords.filter(r => effectiveStatus(r) === 'pending'),
+    [settlementRecords],
+  );
+
   const balances = useMemo(
-    () => calculateBalances(expenses, settlementRecords),
-    [expenses, settlementRecords],
+    () => calculateBalances(expenses, confirmedPayments),
+    [expenses, confirmedPayments],
   );
   const settlementPlan = useMemo(() => calculateSettlements(balances), [balances]);
 
   // The timestamp of the most-recent settlement record (ISO string, lexicographically comparable)
   const lastSettledAt = useMemo(
-    () => settlementRecords.length > 0
-      ? settlementRecords.reduce((max, r) => r.createdAt > max ? r.createdAt : max, '')
+    () => confirmedPayments.length > 0
+      ? confirmedPayments.reduce((max, r) => r.createdAt > max ? r.createdAt : max, '')
       : null,
-    [settlementRecords],
+    [confirmedPayments],
   );
 
   // An expense is "settled" only if it was created BEFORE the last settlement was recorded.
@@ -84,7 +98,7 @@ export const GroupDetails: React.FC = () => {
   // The group banner shows only when every expense is pre-settlement (no new unsettled expenses)
   const isGroupSettled =
     settlementPlan.length === 0 &&
-    settlementRecords.length > 0 &&
+    confirmedPayments.length > 0 &&
     expenses.length > 0 &&
     expenses.every(e => e.createdAt <= (lastSettledAt ?? ''));
 
@@ -152,6 +166,37 @@ export const GroupDetails: React.FC = () => {
     await unlinkClaim(participantId);
     showToast(`${memberName} is no longer linked to ${participantName}`);
   };
+
+  const nameOrYou = (id: string, you = 'you') => id === user?.uid ? you : getUserName(id);
+
+  const actionLabel = (r: SettlementRecord, action: PaymentStatus) =>
+    action === 'confirmed' ? 'Confirm'
+      : action === 'rejected' ? 'Reject'
+      : (r.status ?? 'confirmed') === 'pending' ? 'Cancel' : 'Undo';
+
+  const handlePaymentAction = async (r: SettlementRecord, action: PaymentStatus) => {
+    const money = `$${r.amount.toFixed(2)} from ${nameOrYou(r.from)} to ${nameOrYou(r.to)}`;
+    if (action === 'rejected' && !window.confirm(`Reject ${money}?\n\nIt won't count, and balances stay as they are.`)) return;
+    if (action === 'cancelled' && (r.status ?? 'confirmed') === 'confirmed'
+      && !window.confirm(`Undo ${money}?\n\nBalances go back to before this payment.`)) return;
+    await decidePayment(r.id, action);
+    showToast(action === 'confirmed' ? 'Payment confirmed' : action === 'rejected' ? 'Payment rejected' : 'Payment undone');
+  };
+
+  const paymentButtons = (r: SettlementRecord) =>
+    allowedActions(r, user?.uid ?? '', { memberUids: currentGroup?.members ?? [], isAdmin }).map(a => (
+      <button
+        key={a}
+        onClick={() => handlePaymentAction(r, a)}
+        className={`text-xs font-semibold px-2.5 py-1.5 rounded-lg border transition-colors ${
+          a === 'confirmed'
+            ? 'bg-green-600 border-green-600 text-white hover:bg-green-700'
+            : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+        }`}
+      >
+        {actionLabel(r, a)}
+      </button>
+    ));
 
   const handleDeleteExpense = async (expenseId: string) => {
     if (confirmDeleteId !== expenseId) { setConfirmDeleteId(expenseId); return; }
@@ -353,8 +398,8 @@ export const GroupDetails: React.FC = () => {
                 <div className="z-10">
                   <p className="font-bold text-green-800 dark:text-green-300 text-base leading-tight">All Settled Up!</p>
                   <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
-                    {settlementRecords.length} payment{settlementRecords.length !== 1 ? 's' : ''} recorded
-                    {' · '}{new Date(settlementRecords[0].createdAt).toLocaleDateString()}
+                    {confirmedPayments.length} payment{confirmedPayments.length !== 1 ? 's' : ''} recorded
+                    {' · '}{new Date(confirmedPayments[0].createdAt).toLocaleDateString()}
                   </p>
                 </div>
               </div>
@@ -456,6 +501,29 @@ export const GroupDetails: React.FC = () => {
                   </div>
                 );
               })()}
+
+              {/* Payments waiting for the receiver: not in the balance yet */}
+              {pendingPayments.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {pendingPayments.map(r => (
+                    <div key={r.id} className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm">
+                      <p className="text-gray-800">
+                        {r.to === user?.uid ? (
+                          <><strong>{getUserName(r.from)}</strong> paid you <strong>${r.amount.toFixed(2)}</strong>?</>
+                        ) : (
+                          <><strong>${r.amount.toFixed(2)}</strong> from {nameOrYou(r.from)} to {nameOrYou(r.to)} is pending</>
+                        )}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {r.to === user?.uid
+                          ? `Recorded by ${nameOrYou(r.recordedBy ?? '')}. It counts once you confirm, or in 7 days.`
+                          : `Waiting for ${getUserName(r.to)} to confirm. Recorded by ${nameOrYou(r.recordedBy ?? '')}.`}
+                      </p>
+                      {paymentButtons(r).length > 0 && <div className="flex gap-2 mt-2">{paymentButtons(r)}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
 
             {/* Settlement Plan */}
@@ -533,31 +601,45 @@ export const GroupDetails: React.FC = () => {
 
                 {showHistory && (
                   <div className="space-y-2">
-                    {(showAllHistory ? settlementRecords : settlementRecords.slice(0, 5)).map(r => (
-                      <div
-                        key={r.id}
-                        className="bg-surface p-4 rounded-xl border border-green-100 shadow-sm flex items-center justify-between opacity-70"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center shrink-0">
-                            <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
+                    {(showAllHistory ? settlementRecords : settlementRecords.slice(0, 5)).map(r => {
+                      const status = effectiveStatus(r);
+                      const autoConfirmed = status === 'confirmed' && r.status === 'pending';
+                      const inactive = status === 'rejected' || status === 'cancelled';
+                      return (
+                        <div key={r.id} className={`bg-surface p-4 rounded-xl border shadow-sm ${inactive ? 'opacity-60' : ''}`}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                                status === 'confirmed' ? 'bg-green-100' : status === 'pending' ? 'bg-amber-100' : 'bg-gray-100'
+                              }`}>
+                                <CheckCircle2 className={`w-4 h-4 ${
+                                  status === 'confirmed' ? 'text-green-600 dark:text-green-400' : 'text-gray-400'
+                                }`} />
+                              </div>
+                              <div className="text-sm min-w-0">
+                                <p>
+                                  <span className={`font-semibold ${inactive ? 'line-through text-gray-500' : 'text-gray-800'}`}>{nameOrYou(r.from, 'You')}</span>
+                                  <span className="text-gray-400 mx-1">paid</span>
+                                  <span className={`font-semibold ${inactive ? 'line-through text-gray-500' : 'text-gray-800'}`}>{nameOrYou(r.to)}</span>
+                                </p>
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                  {status === 'pending' ? 'Pending' : status === 'rejected' ? 'Rejected' : status === 'cancelled' ? 'Undone' : autoConfirmed ? 'Auto-confirmed' : 'Confirmed'}
+                                  {r.recordedBy && <> · recorded by {nameOrYou(r.recordedBy)}</>}
+                                  {r.decidedBy && inactive && <> · by {nameOrYou(r.decidedBy)}</>}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className={`font-bold ${inactive ? 'line-through text-gray-400' : 'text-gray-900'}`}>${r.amount.toFixed(2)}</p>
+                              <p className="text-xs text-gray-400">{new Date(r.createdAt).toLocaleDateString()}</p>
+                            </div>
                           </div>
-                          <div className="text-sm">
-                            <span className="line-through text-gray-500 font-semibold">
-                              {r.from === user?.uid ? 'You' : getUserName(r.from)}
-                            </span>
-                            <span className="text-gray-400 mx-1">paid</span>
-                            <span className="line-through text-gray-500 font-semibold">
-                              {r.to === user?.uid ? 'you' : getUserName(r.to)}
-                            </span>
-                          </div>
+                          {status !== 'pending' && paymentButtons(r).length > 0 && (
+                            <div className="flex justify-end gap-2 mt-2">{paymentButtons(r)}</div>
+                          )}
                         </div>
-                        <div className="text-right shrink-0 ml-2">
-                          <p className="line-through text-gray-400 font-bold">${r.amount.toFixed(2)}</p>
-                          <p className="text-xs text-gray-400">{new Date(r.createdAt).toLocaleDateString()}</p>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {settlementRecords.length > 5 && !showAllHistory && (
                       <button
