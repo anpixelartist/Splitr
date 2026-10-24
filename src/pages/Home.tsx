@@ -130,14 +130,14 @@ export const Home: React.FC = () => {
               aria-label="Group code"
               autoCapitalize="characters"
               autoComplete="off"
-              className="flex-1 border rounded-xl px-4 py-2.5 uppercase focus:ring-2 focus:ring-green-500 outline-none tracking-widest"
+              className="flex-1 min-w-0 border rounded-xl px-4 py-2.5 uppercase focus:ring-2 focus:ring-green-500 outline-none tracking-widest"
               value={joinCode}
               onChange={e => setJoinCode(e.target.value)}
             />
             <button
               type="submit"
               disabled={joining}
-              className="bg-green-600 text-white px-4 py-2.5 rounded-xl font-medium hover:bg-green-700 transition-colors disabled:opacity-60 flex items-center gap-1.5"
+              className="shrink-0 bg-green-600 text-white px-4 py-2.5 rounded-xl font-medium hover:bg-green-700 transition-colors disabled:opacity-60 flex items-center gap-1.5"
             >
               {joining && <Loader2 className="w-4 h-4 animate-spin" />}
               Join
