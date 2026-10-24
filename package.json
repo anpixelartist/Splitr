@@ -13,13 +13,11 @@
     "deploy": "npm run build && npx firebase-tools@15 deploy"
   },
   "dependencies": {
-    "clsx": "^2.1.1",
     "firebase": "^12.19.0",
     "lucide-react": "^1.51.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.4",
-    "tailwind-merge": "^3.7.0",
     "uuid": "^14.0.2"
   },
   "devDependencies": {
