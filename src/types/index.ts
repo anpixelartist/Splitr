@@ -34,6 +34,8 @@ export type Expense = {
   splits: Split[];
   createdBy?: string;   // Firebase UID of whoever added this expense
   createdAt: string;
+  editedBy?: string;    // who last edited it
+  editedAt?: number;    // ms, server time
 };
 
 export type Balance = {

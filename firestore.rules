@@ -93,6 +93,17 @@ service cloud.firestore {
             && (request.auth.uid == recorder || isAdminOf(g)));
     }
 
+    // Shared by create and update. Shares adding up is checked by the app:
+    // rules can't sum a list.
+    function validExpense(d) {
+      return validName(d.description, 200)
+        && validMoney(d.amount)
+        && validName(d.paidBy, 128)
+        && d.splits is list
+        && d.splits.size() > 0
+        && d.splits.size() <= 100;
+    }
+
     function validName(s, max) {
       return s is string && s.size() > 0 && s.size() <= max;
     }
@@ -183,15 +194,18 @@ service cloud.firestore {
           && request.resource.data.groupId == gid
           && request.resource.data.createdBy == request.auth.uid
           && request.resource.data.createdAt is string
-          && validName(request.resource.data.description, 200)
-          && validMoney(request.resource.data.amount)
-          && validName(request.resource.data.paidBy, 128)
-          && request.resource.data.splits is list
-          && request.resource.data.splits.size() > 0
-          && request.resource.data.splits.size() <= 100;
+          && validExpense(request.resource.data);
 
-        // Expenses are immutable; admins remove wrong ones.
-        allow update: if false;
+        // The person who added it, or an admin, can fix it. Who added it and
+        // when stay as they were; each edit is stamped with editor and time.
+        allow update: if isMemberOf(groupAt(gid))
+          && (resource.data.get('createdBy', '') == request.auth.uid || isAdminOf(groupAt(gid)))
+          && request.resource.data.keys().hasOnly(
+               ['id', 'groupId', 'description', 'amount', 'paidBy', 'splits', 'createdBy', 'createdAt', 'editedBy', 'editedAt'])
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['id', 'groupId', 'createdBy', 'createdAt'])
+          && request.resource.data.editedBy == request.auth.uid
+          && request.resource.data.editedAt == request.time
+          && validExpense(request.resource.data);
         allow delete: if canPurge(groupAt(gid));
       }
 

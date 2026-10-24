@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useGroup } from '../context/GroupContext';
+import { useGroup, DELETE_UNDO_MS } from '../context/GroupContext';
 import { useAuth } from '../context/AuthContext';
 import { ArrowLeft, Receipt, Share2, Plus, Crown, Trash2, CheckCircle2, MoreVertical, LogOut, ChevronDown, SearchX, UserPlus, Loader2 } from 'lucide-react';
 import { calculateBalances, calculateSettlements, isSettled } from '../lib/settlement';
@@ -9,7 +9,7 @@ import { SettleModal } from '../components/SettleModal';
 import { useToast } from '../context/ToastContext';
 import { unclaimedParticipants, claimedBy } from '../lib/claims';
 import { effectiveStatus, allowedActions, countsTowardBalances } from '../lib/payments';
-import type { PaymentStatus, SettlementRecord } from '../types';
+import type { Expense, PaymentStatus, SettlementRecord } from '../types';
 
 export const GroupDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -27,6 +27,7 @@ export const GroupDetails: React.FC = () => {
     getUsersInGroup,
     isAdmin,
     deleteExpense,
+    undoDeleteExpense,
     recordSettlements,
     decidePayment,
     promoteToAdmin,
@@ -41,6 +42,7 @@ export const GroupDetails: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'expenses' | 'balances'>('expenses');
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
+  const [openExpense, setOpenExpense] = useState<Expense | null>(null);
   const [isSettleOpen, setIsSettleOpen] = useState(false);
   const [showGroupMenu, setShowGroupMenu] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -202,6 +204,10 @@ export const GroupDetails: React.FC = () => {
     if (confirmDeleteId !== expenseId) { setConfirmDeleteId(expenseId); return; }
     await deleteExpense(expenseId);
     setConfirmDeleteId(null);
+    showToast('Expense deleted', 'success', {
+      action: { label: 'Undo', onClick: () => undoDeleteExpense(expenseId) },
+      duration: DELETE_UNDO_MS,
+    });
   };
 
   const handleLeaveGroup = async () => {
@@ -405,8 +411,8 @@ export const GroupDetails: React.FC = () => {
               </div>
             )}
 
-            {isAdmin && expenses.length > 0 && !isGroupSettled && (
-              <p className="text-xs text-center text-gray-400">Use the trash icon to delete an expense</p>
+            {expenses.length > 0 && !isGroupSettled && (
+              <p className="text-xs text-center text-gray-400">Tap an expense to see or edit it</p>
             )}
 
             {expenses.length === 0 ? (
@@ -421,7 +427,12 @@ export const GroupDetails: React.FC = () => {
                 return (
                   <div
                     key={expense.id}
-                    className={`p-4 rounded-xl border shadow-sm transition-all ${
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ${expense.description}`}
+                    onClick={() => { if (!isConfirming) setOpenExpense(expense); }}
+                    onKeyDown={e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); setOpenExpense(expense); } }}
+                    className={`p-4 rounded-xl border shadow-sm transition-all cursor-pointer hover:border-blue-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                       isConfirming
                         ? 'border-red-300 bg-red-50'
                         : expSettled
@@ -435,7 +446,7 @@ export const GroupDetails: React.FC = () => {
                         <span className="font-bold text-gray-900">${expense.amount.toFixed(2)}</span>
                         {isAdmin && (
                           isConfirming ? (
-                            <div className="flex flex-col items-end gap-1">
+                            <div className="flex flex-col items-end gap-1" onClick={e => e.stopPropagation()}>
                               <div className="flex items-center gap-1">
                                 <button
                                   onClick={() => setConfirmDeleteId(null)}
@@ -453,7 +464,7 @@ export const GroupDetails: React.FC = () => {
                             </div>
                           ) : (
                             <button
-                              onClick={() => handleDeleteExpense(expense.id)}
+                              onClick={e => { e.stopPropagation(); handleDeleteExpense(expense.id); }}
                               className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                               aria-label={`Delete ${expense.description}`}
                             >
@@ -470,6 +481,12 @@ export const GroupDetails: React.FC = () => {
                     {expense.createdBy && expense.createdBy !== expense.paidBy && (
                       <p className="text-xs text-gray-400 mt-0.5">
                         Added by {expense.createdBy === user?.uid ? 'you' : getUserName(expense.createdBy)}
+                      </p>
+                    )}
+                    {expense.editedBy && (
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        Edited by {expense.editedBy === user?.uid ? 'you' : getUserName(expense.editedBy)}
+                        {expense.editedAt && <> · {new Date(expense.editedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</>}
                       </p>
                     )}
                     {/* Settled badge */}
@@ -803,6 +820,17 @@ export const GroupDetails: React.FC = () => {
       {isAddExpenseOpen && (
         <AddExpenseModal
           onClose={() => setIsAddExpenseOpen(false)}
+          users={groupUsers}
+        />
+      )}
+
+      {openExpense && (
+        <AddExpenseModal
+          key={openExpense.id}
+          expense={openExpense}
+          readOnly={openExpense.createdBy !== user?.uid && !isAdmin}
+          settledBefore={lastSettledAt !== null && openExpense.createdAt <= lastSettledAt}
+          onClose={() => setOpenExpense(null)}
           users={groupUsers}
         />
       )}
