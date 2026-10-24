@@ -208,7 +208,7 @@ export const GroupDetails: React.FC = () => {
   }
 
   return (
-    <div className="max-w-md mx-auto min-h-screen bg-gray-50 flex flex-col relative">
+    <div className="max-w-md md:max-w-2xl lg:max-w-5xl mx-auto min-h-screen bg-gray-50 flex flex-col relative">
       <header className="bg-surface border-b sticky top-0 z-10">
         <div className="p-4 flex items-center justify-between">
           <button onClick={() => navigate('/')} className="p-2 -ml-2 rounded-full hover:bg-gray-100" aria-label="Back">
@@ -234,7 +234,7 @@ export const GroupDetails: React.FC = () => {
             </button>
           </div>
         </div>
-        <div className="flex border-t">
+        <div className="flex border-t lg:hidden">
           {(['expenses', 'balances'] as const).map(tab => (
             <button
               key={tab}
@@ -249,9 +249,11 @@ export const GroupDetails: React.FC = () => {
         </div>
       </header>
 
-      <main className="flex-1 p-4 pb-24 overflow-y-auto">
-        {activeTab === 'expenses' ? (
-          <div className="space-y-3">
+      <main className="flex-1 p-4 lg:p-8 pb-[calc(6rem+env(safe-area-inset-bottom))] lg:pb-28">
+        <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-8 lg:items-start">
+          {/* Phones show one tab at a time; laptops show both columns */}
+          <div className={`space-y-3 ${activeTab === 'expenses' ? '' : 'hidden'} lg:block`}>
+            <h3 className="hidden lg:block text-sm font-bold text-gray-500 uppercase tracking-wider">Expenses</h3>
 
             {/* ── All-settled banner ─────────────────────────────────────── */}
             {isGroupSettled && (
@@ -351,8 +353,7 @@ export const GroupDetails: React.FC = () => {
               })
             )}
           </div>
-        ) : (
-          <div className="space-y-6">
+          <div className={`space-y-6 ${activeTab === 'balances' ? '' : 'hidden'} lg:block`}>
             {/* Your Balance */}
             <section>
               <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Your Balance</h3>
@@ -551,14 +552,14 @@ export const GroupDetails: React.FC = () => {
               </div>
             </section>
           </div>
-        )}
+        </div>
       </main>
 
       {/* Add Expense FAB */}
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-20">
+      <div className="fixed bottom-[calc(1.5rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 lg:left-auto lg:translate-x-0 lg:right-[max(2rem,calc((100vw-64rem)/2+2rem))] z-20">
         <button
           onClick={() => setIsAddExpenseOpen(true)}
-          className="bg-blue-600 text-white px-6 py-4 rounded-full shadow-lg shadow-blue-200 flex items-center gap-2 font-bold text-lg hover:bg-blue-700 transition-transform active:scale-95"
+          className="bg-blue-600 text-white px-6 py-4 rounded-full shadow-lg shadow-blue-200 flex items-center gap-2 whitespace-nowrap font-bold text-lg hover:bg-blue-700 transition-transform active:scale-95"
         >
           <Plus className="w-6 h-6" /> Add Expense
         </button>
@@ -567,11 +568,11 @@ export const GroupDetails: React.FC = () => {
       {/* ── Group menu sheet ─────────────────────────────────────────────────── */}
       {showGroupMenu && (
         <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-end"
+          className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center sm:p-4"
           onClick={() => setShowGroupMenu(false)}
         >
           <div
-            className="bg-surface w-full max-w-md mx-auto rounded-t-2xl overflow-hidden"
+            className="bg-surface w-full max-w-md mx-auto rounded-t-2xl sm:rounded-2xl overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0"
             onClick={e => e.stopPropagation()}
           >
             <div className="px-4 pt-4 pb-1">

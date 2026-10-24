@@ -72,8 +72,8 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-4">
-      <div className="bg-surface w-full max-w-md rounded-2xl shadow-xl flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+      <div className="bg-surface w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col max-h-[90dvh] pb-[env(safe-area-inset-bottom)] sm:pb-0">
 
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b shrink-0">
@@ -250,7 +250,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
                 value={newContactName}
                 onChange={e => setNewContactName(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleAddContact()}
-                className="flex-1 text-sm outline-none bg-transparent placeholder-gray-400 py-0.5"
+                className="flex-1 text-base sm:text-sm outline-none bg-transparent placeholder-gray-400 py-0.5"
               />
               {newContactName.trim() && (
                 <button
@@ -288,7 +288,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
                             if (e.key === 'Enter') commitContactEdit();
                             if (e.key === 'Escape') setEditingContactId(null);
                           }}
-                          className="flex-1 text-sm border-b border-blue-400 outline-none py-0.5 font-medium"
+                          className="flex-1 text-base sm:text-sm border-b border-blue-400 outline-none py-0.5 font-medium"
                         />
                       ) : (
                         <span className="flex-1 text-sm font-medium text-gray-800 truncate">

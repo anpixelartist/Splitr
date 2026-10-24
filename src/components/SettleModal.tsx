@@ -98,7 +98,7 @@ export const SettleModal: React.FC<Props> = ({
         </div>
       ) : (
         /* ── Normal modal ───────────────────────────────────────────────────── */
-        <div className="bg-surface w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col max-h-[90vh] overflow-hidden">
+        <div className="bg-surface w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col max-h-[90dvh] overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
 
           {/* Header */}
           <div className="p-4 border-b flex justify-between items-center shrink-0">

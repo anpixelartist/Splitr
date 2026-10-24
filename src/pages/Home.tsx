@@ -61,7 +61,7 @@ export const Home: React.FC = () => {
     group.members.length + (group.participants?.length ?? 0);
 
   return (
-    <div className="max-w-md mx-auto p-4 space-y-8">
+    <div className="max-w-md md:max-w-2xl lg:max-w-5xl mx-auto p-4 lg:px-8 space-y-8">
 
       {/* ── Header ── */}
       <header className="flex items-center justify-between py-4">
@@ -91,6 +91,7 @@ export const Home: React.FC = () => {
         </div>
       )}
 
+      <div className="space-y-8 lg:space-y-0 lg:grid lg:grid-cols-[22rem_minmax(0,1fr)] lg:gap-8 lg:items-start">
       {/* ── Actions ── */}
       <section className="space-y-4">
         <div className="bg-surface p-6 rounded-xl shadow-sm border">
@@ -143,7 +144,7 @@ export const Home: React.FC = () => {
         {groups.length === 0 ? (
           <p className="text-gray-500 text-center py-8">You aren't in any groups yet.</p>
         ) : (
-          <div className="grid gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             {groups.map(group => (
               <button
                 key={group.id}
@@ -162,6 +163,7 @@ export const Home: React.FC = () => {
           </div>
         )}
       </section>
+      </div>
 
       {/* ── Modals ── */}
       {showCreateModal && (
