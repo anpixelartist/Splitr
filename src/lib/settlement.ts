@@ -79,18 +79,20 @@ export function calculateSettlements(balances: Record<string, Balance>): Settlem
 }
 
 /**
- * Splits `total` equally between `userIds`, exact to the cent. Leftover cents
+ * Splits `total` equally between `userIds`, exact to the smallest unit of the
+ * currency (`digits` decimals: 2 for cents, 0 for whole yen). Leftover units
  * go one each to the first people in the list, so the shares always add up
  * to exactly `total` (e.g. 100 / 3 -> 33.34, 33.33, 33.33).
  */
-export function splitEqually(total: number, userIds: string[]): { userId: string; amount: number }[] {
+export function splitEqually(total: number, userIds: string[], digits = 2): { userId: string; amount: number }[] {
   if (userIds.length === 0) return [];
-  const totalCents = Math.round(total * 100);
-  const base = Math.floor(totalCents / userIds.length);
-  const remainder = totalCents - base * userIds.length;
+  const scale = 10 ** digits;
+  const totalUnits = Math.round(total * scale);
+  const base = Math.floor(totalUnits / userIds.length);
+  const remainder = totalUnits - base * userIds.length;
   return userIds.map((userId, i) => ({
     userId,
-    amount: (base + (i < remainder ? 1 : 0)) / 100,
+    amount: (base + (i < remainder ? 1 : 0)) / scale,
   }));
 }
 
@@ -109,11 +111,13 @@ export const roundToCents = (n: number) => Math.round(n * 100) / 100;
 export function validateExpense(
   expense: Pick<Expense, 'amount' | 'paidBy' | 'splits'>,
   groupUserIds: string[],
+  digits = 2, // decimals the group's currency allows (0 for yen)
 ): string | null {
   const known = new Set(groupUserIds);
   const total = toCents(expense.amount);
+  const wholeUnits = (n: number) => Math.abs(n * 10 ** digits - Math.round(n * 10 ** digits)) <= 1e-3;
   if (!Number.isFinite(expense.amount) || total <= 0) return 'The amount must be greater than 0.';
-  if (Math.abs(expense.amount * 100 - total) > 1e-3) return 'Amounts can only have whole cents.';
+  if (!wholeUnits(expense.amount)) return digits === 0 ? 'This currency has no decimals.' : 'Amounts can only have whole cents.';
   if (!known.has(expense.paidBy)) return 'The person who paid is not in this group.';
   if (expense.splits.length === 0) return 'Split the expense with at least one person.';
 
@@ -124,8 +128,8 @@ export function validateExpense(
     if (seen.has(split.userId)) return 'Someone appears twice in the split.';
     seen.add(split.userId);
     const c = toCents(split.amount);
-    if (!Number.isFinite(split.amount) || c < 0 || Math.abs(split.amount * 100 - c) > 1e-3) {
-      return 'Each share must be a positive amount in whole cents.';
+    if (!Number.isFinite(split.amount) || c < 0 || !wholeUnits(split.amount)) {
+      return digits === 0 ? 'Each share must be a whole amount.' : 'Each share must be a positive amount in whole cents.';
     }
     sum += c;
   }

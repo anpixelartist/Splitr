@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { X, CheckCircle2, Loader2, Share2 } from 'lucide-react';
 import type { SettlementTransaction } from '../types';
 import { shareSettlementImage } from '../lib/shareSettlement';
+import { DEFAULT_CURRENCY, currencyDigits, currencySymbol } from '../lib/money';
 
 interface Props {
+  currency?: string;
   pendingTransactions: SettlementTransaction[];
   groupName: string;
   getUserName: (uid: string) => string;
@@ -19,7 +21,9 @@ export const SettleModal: React.FC<Props> = ({
   currentUserId,
   onRecord,
   onClose,
+  currency = DEFAULT_CURRENCY,
 }) => {
+  const digits = currencyDigits(currency);
   // Keyed by payer→payee (not list index) so a plan that changes while the
   // modal is open can't shift checkmarks onto the wrong rows.
   const keyOf = (t: SettlementTransaction) => `${t.from}->${t.to}`;
@@ -42,7 +46,9 @@ export const SettleModal: React.FC<Props> = ({
   const amountFor = (t: SettlementTransaction): number | null => {
     const raw = amounts[keyOf(t)];
     if (raw === undefined || raw.trim() === '') return t.amount;
-    const cents = Math.round(parseFloat(raw) * 100);
+    const value = parseFloat(raw);
+    if (digits === 0 && !Number.isInteger(value)) return null; // e.g. no fractions of a yen
+    const cents = Math.round(value * 100);
     if (!Number.isFinite(cents) || cents < 1 || cents > Math.round(t.amount * 100)) return null;
     return cents / 100;
   };
@@ -71,6 +77,7 @@ export const SettleModal: React.FC<Props> = ({
         recorded,
         groupName,
         (uid) => uid === currentUserId ? 'You' : getUserName(uid),
+        currency,
       );
     } finally {
       setSharing(false);
@@ -170,17 +177,17 @@ export const SettleModal: React.FC<Props> = ({
                     </div>
                   </button>
                   <div className="relative w-28 shrink-0">
-                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">{currencySymbol(currency)}</span>
                     <input
                       type="number"
                       inputMode="decimal"
-                      step="0.01"
-                      min="0.01"
+                      step={digits === 0 ? '1' : '0.01'}
+                      min={digits === 0 ? '1' : '0.01'}
                       max={t.amount}
                       aria-label={`Amount ${fromName} ${t.from === currentUserId ? 'pay' : 'pays'} ${toName}`}
                       disabled={recording || !isSelected}
-                      placeholder={t.amount.toFixed(2)}
-                      value={amounts[key] ?? t.amount.toFixed(2)}
+                      placeholder={t.amount.toFixed(digits)}
+                      value={amounts[key] ?? t.amount.toFixed(digits)}
                       onChange={e => setAmounts(prev => ({ ...prev, [key]: e.target.value }))}
                       className={`w-full pl-6 pr-2 py-2 rounded-lg border text-right font-bold text-gray-900 outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 ${
                         isSelected && amountFor(t) === null ? 'border-red-400' : 'border-gray-200'

@@ -11,6 +11,7 @@ import { useToast } from './ToastContext';
 import { calculateBalances, isSettled, validateExpense } from '../lib/settlement';
 import { applyClaims, resolveId } from '../lib/claims';
 import { initialStatus, countsTowardBalances } from '../lib/payments';
+import { DEFAULT_CURRENCY, currencyDigits } from '../lib/money';
 import { v4 as uuidv4 } from 'uuid';
 
 // ─── Firestore layout ────────────────────────────────────────────────────────
@@ -122,7 +123,7 @@ interface GroupContextType {
   loading: boolean;
   isAdmin: boolean;
   isMember: boolean;
-  createGroup: (name: string, participants?: { id: string; name: string }[]) => Promise<string>;
+  createGroup: (name: string, participants?: { id: string; name: string }[], currency?: string) => Promise<string>;
   /** Joins by code; `claimId` = the name-only participant this person says they are. */
   joinGroup: (groupId: string, claimId?: string) => Promise<JoinResult>;
   /** For a member who joined as a new person: "that placeholder was me". */
@@ -437,6 +438,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const createGroup = async (
     name: string,
     participants: { id: string; name: string }[] = [],
+    currency: string = DEFAULT_CURRENCY,
   ): Promise<string> => {
     if (!user) throw new Error('Must be logged in');
 
@@ -461,6 +463,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       createdBy: user.uid,
       admins: [user.uid],
       memberNames: { [user.uid]: userName },
+      currency,
       createdAt: new Date().toISOString(),
     };
 
@@ -517,7 +520,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const gid = currentGroupId;
 
     // Refuse to write an expense that would create or destroy money
-    const problem = validateExpense(expenseData, getUsersInGroup().map(u => u.id));
+    const problem = validateExpense(expenseData, getUsersInGroup().map(u => u.id), currencyDigits(currentGroup?.currency ?? DEFAULT_CURRENCY));
     if (problem) throw new Error(problem);
 
     const newExpense: Expense = {
@@ -593,7 +596,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const gid = currentGroupId;
     const existing = expenses.find(e => e.id === id);
     if (!existing || (existing.createdBy !== uid && !isAdmin)) throw new Error('Only the person who added this expense or an admin can edit it.');
-    const problem = validateExpense(changes, getUsersInGroup().map(u => u.id));
+    const problem = validateExpense(changes, getUsersInGroup().map(u => u.id), currencyDigits(currentGroup?.currency ?? DEFAULT_CURRENCY));
     if (problem) throw new Error(problem);
 
     const editedAt = Date.now();

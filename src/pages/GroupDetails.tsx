@@ -7,6 +7,7 @@ import { calculateBalances, calculateSettlements, isSettled } from '../lib/settl
 import { AddExpenseModal } from '../components/AddExpenseModal';
 import { SettleModal } from '../components/SettleModal';
 import { useToast } from '../context/ToastContext';
+import { DEFAULT_CURRENCY, formatMoney, formatDate } from '../lib/money';
 import { unclaimedParticipants, claimedBy } from '../lib/claims';
 import { effectiveStatus, allowedActions, countsTowardBalances } from '../lib/payments';
 import type { Expense, PaymentStatus, SettlementRecord } from '../types';
@@ -39,6 +40,8 @@ export const GroupDetails: React.FC = () => {
   } = useGroup();
 
   const { showToast } = useToast();
+  const currency = currentGroup?.currency ?? DEFAULT_CURRENCY;
+  const money = (n: number) => formatMoney(n, currency);
 
   const [activeTab, setActiveTab] = useState<'expenses' | 'balances'>('expenses');
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
@@ -152,8 +155,8 @@ export const GroupDetails: React.FC = () => {
 
   const handleClaim = async (p: { id: string; name: string }) => {
     const bal = balances[p.id]?.netBalance ?? 0;
-    const money = bal === 0 ? '' : `, including what ${p.name} ${bal < 0 ? 'owes' : 'is owed'} ($${Math.abs(bal).toFixed(2)})`;
-    if (!window.confirm(`Take over ${p.name}'s place in this group${money}?\n\nAn admin can undo this.`)) return;
+    const owed = bal === 0 ? '' : `, including what ${p.name} ${bal < 0 ? 'owes' : 'is owed'} (${money(Math.abs(bal))})`;
+    if (!window.confirm(`Take over ${p.name}'s place in this group${owed}?\n\nAn admin can undo this.`)) return;
     await claimParticipant(p.id);
     showToast(`You're now ${p.name} in this group`);
   };
@@ -177,10 +180,10 @@ export const GroupDetails: React.FC = () => {
       : (r.status ?? 'confirmed') === 'pending' ? 'Cancel' : 'Undo';
 
   const handlePaymentAction = async (r: SettlementRecord, action: PaymentStatus) => {
-    const money = `$${r.amount.toFixed(2)} from ${nameOrYou(r.from)} to ${nameOrYou(r.to)}`;
-    if (action === 'rejected' && !window.confirm(`Reject ${money}?\n\nIt won't count, and balances stay as they are.`)) return;
+    const payment = `${money(r.amount)} from ${nameOrYou(r.from)} to ${nameOrYou(r.to)}`;
+    if (action === 'rejected' && !window.confirm(`Reject ${payment}?\n\nIt won't count, and balances stay as they are.`)) return;
     if (action === 'cancelled' && (r.status ?? 'confirmed') === 'confirmed'
-      && !window.confirm(`Undo ${money}?\n\nBalances go back to before this payment.`)) return;
+      && !window.confirm(`Undo ${payment}?\n\nBalances go back to before this payment.`)) return;
     await decidePayment(r.id, action);
     showToast(action === 'confirmed' ? 'Payment confirmed' : action === 'rejected' ? 'Payment rejected' : 'Payment undone');
   };
@@ -216,8 +219,8 @@ export const GroupDetails: React.FC = () => {
     if (!isSettled(myBalance)) {
       showToast(
         myBalance < 0
-          ? `Settle the $${Math.abs(myBalance).toFixed(2)} you owe before leaving.`
-          : `You're still owed $${myBalance.toFixed(2)} — settle up before leaving.`,
+          ? `Settle the ${money(Math.abs(myBalance))} you owe before leaving.`
+          : `You're still owed ${money(myBalance)} — settle up before leaving.`,
         'error',
       );
       return;
@@ -405,7 +408,7 @@ export const GroupDetails: React.FC = () => {
                   <p className="font-bold text-green-800 dark:text-green-300 text-base leading-tight">All Settled Up!</p>
                   <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
                     {confirmedPayments.length} payment{confirmedPayments.length !== 1 ? 's' : ''} recorded
-                    {' · '}{new Date(confirmedPayments[0].createdAt).toLocaleDateString()}
+                    {' · '}{formatDate(confirmedPayments[0].createdAt)}
                   </p>
                 </div>
               </div>
@@ -443,7 +446,7 @@ export const GroupDetails: React.FC = () => {
                     <div className="flex justify-between items-start mb-1">
                       <h3 className="font-semibold text-gray-800 flex-1 mr-2">{expense.description}</h3>
                       <div className="flex items-center gap-2 shrink-0">
-                        <span className="font-bold text-gray-900">${expense.amount.toFixed(2)}</span>
+                        <span className="font-bold text-gray-900">{money(expense.amount)}</span>
                         {isAdmin && (
                           isConfirming ? (
                             <div className="flex flex-col items-end gap-1" onClick={e => e.stopPropagation()}>
@@ -476,7 +479,7 @@ export const GroupDetails: React.FC = () => {
                     </div>
                     <div className="text-sm text-gray-500 flex justify-between items-center">
                       <span>Paid by {expense.paidBy === user?.uid ? 'you' : getUserName(expense.paidBy)}</span>
-                      <span>{new Date(expense.createdAt).toLocaleDateString()}</span>
+                      <span>{formatDate(expense.createdAt)}</span>
                     </div>
                     {expense.createdBy && expense.createdBy !== expense.paidBy && (
                       <p className="text-xs text-gray-400 mt-0.5">
@@ -486,7 +489,7 @@ export const GroupDetails: React.FC = () => {
                     {expense.editedBy && (
                       <p className="text-xs text-gray-400 mt-0.5">
                         Edited by {expense.editedBy === user?.uid ? 'you' : getUserName(expense.editedBy)}
-                        {expense.editedAt && <> · {new Date(expense.editedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</>}
+                        {expense.editedAt && <> · {formatDate(expense.editedAt, undefined, false)}</>}
                       </p>
                     )}
                     {/* Settled badge */}
@@ -513,7 +516,7 @@ export const GroupDetails: React.FC = () => {
                       {myBalance > 0 ? 'You are owed' : myBalance < 0 ? 'You owe' : 'You are settled up'}
                     </p>
                     <p className={`text-3xl font-bold ${myBalance > 0 ? 'text-green-700 dark:text-green-300' : myBalance < 0 ? 'text-red-700 dark:text-red-300' : 'text-gray-700'}`}>
-                      ${Math.abs(myBalance).toFixed(2)}
+                      {money(Math.abs(myBalance))}
                     </p>
                   </div>
                 );
@@ -526,9 +529,9 @@ export const GroupDetails: React.FC = () => {
                     <div key={r.id} className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm">
                       <p className="text-gray-800">
                         {r.to === user?.uid ? (
-                          <><strong>{getUserName(r.from)}</strong> paid you <strong>${r.amount.toFixed(2)}</strong>?</>
+                          <><strong>{getUserName(r.from)}</strong> paid you <strong>{money(r.amount)}</strong>?</>
                         ) : (
-                          <><strong>${r.amount.toFixed(2)}</strong> from {nameOrYou(r.from)} to {nameOrYou(r.to)} is pending</>
+                          <><strong>{money(r.amount)}</strong> from {nameOrYou(r.from)} to {nameOrYou(r.to)} is pending</>
                         )}
                       </p>
                       <p className="text-xs text-gray-500 mt-0.5">
@@ -590,7 +593,7 @@ export const GroupDetails: React.FC = () => {
                           <span className="font-semibold">{s.to === user?.uid ? 'you' : getUserName(s.to)}</span>
                         </div>
                       </div>
-                      <span className="font-bold text-gray-900">${s.amount.toFixed(2)}</span>
+                      <span className="font-bold text-gray-900">{money(s.amount)}</span>
                     </div>
                   ))}
                 </div>
@@ -647,8 +650,8 @@ export const GroupDetails: React.FC = () => {
                               </div>
                             </div>
                             <div className="text-right shrink-0">
-                              <p className={`font-bold ${inactive ? 'line-through text-gray-400' : 'text-gray-900'}`}>${r.amount.toFixed(2)}</p>
-                              <p className="text-xs text-gray-400">{new Date(r.createdAt).toLocaleDateString()}</p>
+                              <p className={`font-bold ${inactive ? 'line-through text-gray-400' : 'text-gray-900'}`}>{money(r.amount)}</p>
+                              <p className="text-xs text-gray-400">{formatDate(r.createdAt)}</p>
                             </div>
                           </div>
                           {status !== 'pending' && paymentButtons(r).length > 0 && (
@@ -709,7 +712,7 @@ export const GroupDetails: React.FC = () => {
                         <p className="text-xs text-gray-400 mt-0.5">
                           {bal === 0 ? 'Settled' : (
                             <span className={bal > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
-                              {bal > 0 ? '+' : '-'}${Math.abs(bal).toFixed(2)}
+                              {bal > 0 ? '+' : '-'}{money(Math.abs(bal))}
                             </span>
                           )}
                         </p>
@@ -839,6 +842,7 @@ export const GroupDetails: React.FC = () => {
         <SettleModal
           pendingTransactions={settlementPlan}
           groupName={currentGroup.name}
+          currency={currency}
           getUserName={getUserName}
           currentUserId={user?.uid || ''}
           onRecord={async (selected) => { await recordSettlements(selected); }}

@@ -20,9 +20,10 @@ export const Home: React.FC = () => {
   const handleCreateGroup = async (
     groupName: string,
     participants: { id: string; name: string }[],
+    currency: string,
   ) => {
     try {
-      const id = await createGroup(groupName, participants);
+      const id = await createGroup(groupName, participants, currency);
       setShowCreateModal(false);
       navigate(`/group/${id}`);
     } catch {

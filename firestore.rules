@@ -139,7 +139,8 @@ service cloud.firestore {
       allow create: if signedIn()
         && gid.size() >= 4 && gid.size() <= 12
         && request.resource.data.keys().hasOnly(
-             ['id', 'name', 'members', 'participants', 'createdBy', 'admins', 'memberNames', 'createdAt'])
+             ['id', 'name', 'members', 'participants', 'createdBy', 'admins', 'memberNames', 'createdAt', 'currency'])
+        && request.resource.data.get('currency', 'USD').matches('^[A-Z]{3}$')
         && validName(request.resource.data.name, 100)
         && request.resource.data.members == [request.auth.uid]
         && request.resource.data.admins == [request.auth.uid]

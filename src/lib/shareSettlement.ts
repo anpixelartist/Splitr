@@ -1,3 +1,4 @@
+import { DEFAULT_CURRENCY, formatMoney } from './money';
 export interface ShareTransaction {
   from: string;
   to: string;
@@ -8,6 +9,7 @@ export async function shareSettlementImage(
   transactions: ShareTransaction[],
   groupName: string,
   getName: (uid: string) => string,
+  currency: string = DEFAULT_CURRENCY,
 ): Promise<void> {
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   const W = 420;
@@ -91,7 +93,7 @@ export async function shareSettlementImage(
     ctx.fillStyle = '#16a34a';
     ctx.font = `bold 17px -apple-system, 'Helvetica Neue', Arial, sans-serif`;
     ctx.textBaseline = 'middle';
-    ctx.fillText(`$${t.amount.toFixed(2)}`, rX + rW - 14, midY);
+    ctx.fillText(formatMoney(t.amount, currency), rX + rW - 14, midY);
   });
 
   // ── Footer ──────────────────────────────────────────────────────────────
@@ -109,7 +111,7 @@ export async function shareSettlementImage(
 
       const file = new File([blob], 'settlement.png', { type: 'image/png' });
       const textSummary = transactions
-        .map(t => `${getName(t.from)} pays ${getName(t.to)}: $${t.amount.toFixed(2)}`)
+        .map(t => `${getName(t.from)} pays ${getName(t.to)}: ${formatMoney(t.amount, currency)}`)
         .join('\n');
 
       try {

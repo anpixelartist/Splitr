@@ -3,7 +3,7 @@
 Split group expenses fairly and settle up. Works on phones and laptops as an installable app (PWA), syncs in real time between members, and keeps working offline.
 
 - **Groups:** create a group, invite people with a link or a 6-character code, and add people who don't use the app as named participants
-- **Expenses:** split equally (exact to the cent) or by exact amounts
+- **Expenses:** split equally (exact to the cent) or by exact amounts, in the group's own currency (₹, $, €, ¥ and more), shown in the phone's local number and date format
 - **Balances:** see who owes whom, with a short settlement plan
 - **Settle up:** record payments and share a summary image
 - **Admins:** promote or revoke admins, delete expenses or the whole group
@@ -48,7 +48,7 @@ firebase.json               hosting + rules + emulator config
 
 ```
 users/{uid}                          { name, contacts[] }
-groups/{code}                        { name, members[], admins[], memberNames{}, participants[], claims{}, createdBy }
+groups/{code}                        { name, members[], admins[], memberNames{}, participants[], claims{}, currency, createdBy }
 groups/{code}/expenses/{id}          { description, amount, paidBy, splits[], createdBy, createdAt, editedBy?, editedAt? }
 groups/{code}/settlements/{id}       { from, to, amount, recordedBy, createdAt, status, recordedAt, decidedBy?, decidedAt? }
 ```

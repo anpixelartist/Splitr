@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { X, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { splitEqually } from '../lib/settlement';
 import type { Expense } from '../types';
+import { DEFAULT_CURRENCY, currencyDigits, currencySymbol, formatMoney } from '../lib/money';
 
 interface Props {
   onClose: () => void;
@@ -19,7 +20,7 @@ interface Props {
 // Prefill for an existing expense: shares merged per person (a claimed
 // placeholder can make one person appear twice), and "Equally" when the
 // shares differ by at most the leftover cent.
-const initialSplit = (expense: Expense | undefined, users: { id: string }[]) => {
+const initialSplit = (expense: Expense | undefined, users: { id: string }[], digits: number) => {
   if (!expense) return { method: 'equal' as const, exact: {}, excluded: new Set<string>() };
   const shares = new Map<string, number>();
   for (const s of expense.splits) shares.set(s.userId, Math.round(((shares.get(s.userId) ?? 0) + s.amount) * 100) / 100);
@@ -27,7 +28,7 @@ const initialSplit = (expense: Expense | undefined, users: { id: string }[]) => 
   const equal = cents.length > 0 && Math.max(...cents) - Math.min(...cents) <= 1;
   return {
     method: equal ? 'equal' as const : 'exact' as const,
-    exact: Object.fromEntries([...shares].map(([id, a]) => [id, a.toFixed(2)])),
+    exact: Object.fromEntries([...shares].map(([id, a]) => [id, a.toFixed(digits)])),
     excluded: new Set(users.map(u => u.id).filter(id => !shares.has(id))),
   };
 };
@@ -35,10 +36,14 @@ const initialSplit = (expense: Expense | undefined, users: { id: string }[]) => 
 export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, readOnly = false, settledBefore = false }) => {
   const { addExpense, updateExpense, currentGroup } = useGroup();
   const { user } = useAuth();
-  const [init] = useState(() => initialSplit(expense, users));
+  const currency = currentGroup?.currency ?? DEFAULT_CURRENCY;
+  const digits = currencyDigits(currency);
+  const symbol = currencySymbol(currency);
+  const step = digits === 0 ? '1' : '0.01';
+  const [init] = useState(() => initialSplit(expense, users, digits));
 
   const [description, setDescription] = useState(expense?.description ?? '');
-  const [amount, setAmount] = useState(expense ? expense.amount.toFixed(2) : '');
+  const [amount, setAmount] = useState(expense ? expense.amount.toFixed(digits) : '');
   const [paidBy, setPaidBy] = useState(expense?.paidBy ?? user?.uid ?? '');
   const [splitMethod, setSplitMethod] = useState<'equal' | 'exact'>(init.method);
   const [exactSplits, setExactSplits] = useState<Record<string, string>>(init.exact);
@@ -57,7 +62,12 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
     if (!currentGroup || !user) return;
 
     // ── Validation ──────────────────────────────────────────────────────────
-    const totalAmount = Math.round(parseFloat(amount) * 100) / 100;
+    const rawAmount = parseFloat(amount);
+    if (digits === 0 && !Number.isNaN(rawAmount) && !Number.isInteger(rawAmount)) {
+      setError(`${currency} amounts are whole numbers.`);
+      return;
+    }
+    const totalAmount = Math.round(rawAmount * 100) / 100;
     if (!description.trim()) {
       setError('Please enter a description.');
       return;
@@ -75,7 +85,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
         setError('Select at least one person to split with.');
         return;
       }
-      splits.push(...splitEqually(totalAmount, active));
+      splits.push(...splitEqually(totalAmount, active, digits));
     } else {
       // Compare in whole cents to avoid floating-point drift
       let sumCents = 0;
@@ -95,7 +105,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
       const totalCents = Math.round(totalAmount * 100);
       if (sumCents !== totalCents) {
         setError(
-          `Amounts don't add up — off by $${(Math.abs(sumCents - totalCents) / 100).toFixed(2)}. Total must equal $${totalAmount.toFixed(2)}.`,
+          `Amounts don't add up — off by ${formatMoney(Math.abs(sumCents - totalCents) / 100, currency)}. Total must equal ${formatMoney(totalAmount, currency)}.`,
         );
         return;
       }
@@ -171,11 +181,11 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Total Amount ($)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Total Amount ({symbol})</label>
               <input
                 type="number"
                 inputMode="decimal"
-                step="0.01"
+                step={step}
                 min="0"
                 placeholder="0.00"
                 className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none text-2xl font-bold"
@@ -254,11 +264,11 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
                         {u.id === user?.uid ? 'Me' : u.name}
                       </span>
                       <div className="relative w-32">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{symbol}</span>
                         <input
                           type="number"
                           inputMode="decimal"
-                          step="0.01"
+                          step={step}
                           min="0"
                           className="w-full border-none shadow-sm rounded-md pl-7 pr-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
                           placeholder="0.00"

@@ -82,6 +82,16 @@ describe('groups', () => {
     }));
   });
 
+  it('stores a currency code with a new group, and never changes it', async () => {
+    const g = (id: string, currency: string) => ({
+      id, name: 'G', members: ['carl'], admins: ['carl'], createdBy: 'carl',
+      memberNames: {}, participants: [], createdAt: '', currency,
+    });
+    await assertSucceeds(setDoc(doc(as('carl'), 'groups', 'CUR234'), g('CUR234', 'INR')));
+    await assertFails(setDoc(doc(as('carl'), 'groups', 'CUR345'), g('CUR345', 'rupees')));
+    await assertFails(updateDoc(doc(as('carl'), 'groups', 'CUR234'), { currency: 'USD' }));
+  });
+
   it('cannot overwrite an existing group (code collision)', async () => {
     await assertFails(setDoc(doc(as('dave'), 'groups', GID), {
       ...baseGroup, members: ['dave'], admins: ['dave'], createdBy: 'dave',

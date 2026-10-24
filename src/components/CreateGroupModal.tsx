@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, Plus, Check, Users, CheckCircle2 } from 'lucide-react';
 import type { Contact } from '../types';
+import { CURRENCIES, currencyName, currencySymbol, defaultCurrency } from '../lib/money';
 
 interface Props {
   contacts: Contact[];
   onAddContact: (name: string) => Promise<Contact>;
   onClose: () => void;
-  onCreate: (groupName: string, participants: { id: string; name: string }[]) => void;
+  onCreate: (groupName: string, participants: { id: string; name: string }[], currency: string) => void;
 }
 
 export const CreateGroupModal: React.FC<Props> = ({
@@ -16,6 +17,7 @@ export const CreateGroupModal: React.FC<Props> = ({
   onCreate,
 }) => {
   const [groupName, setGroupName] = useState('');
+  const [currency, setCurrency] = useState(() => defaultCurrency());
   const [newPersonName, setNewPersonName] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // local copy so newly added contacts show immediately
@@ -57,7 +59,7 @@ export const CreateGroupModal: React.FC<Props> = ({
     e.preventDefault();
     if (!groupName.trim()) return;
     const participants = localContacts.filter(c => selectedIds.has(c.id));
-    onCreate(groupName.trim(), participants);
+    onCreate(groupName.trim(), participants, currency);
   };
 
   const selectedContacts = localContacts.filter(c => selectedIds.has(c.id));
@@ -95,6 +97,23 @@ export const CreateGroupModal: React.FC<Props> = ({
                 className="w-full border rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-gray-900"
                 autoFocus
               />
+            </div>
+
+            {/* Currency: fixed once the group exists, since amounts are stored in it */}
+            <div>
+              <label htmlFor="group-currency" className="text-sm font-medium text-gray-700 block mb-1.5">
+                Currency
+              </label>
+              <select
+                id="group-currency"
+                value={currency}
+                onChange={e => setCurrency(e.target.value)}
+                className="w-full border rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-gray-900"
+              >
+                {CURRENCIES.map(c => (
+                  <option key={c} value={c}>{currencySymbol(c)} {c} · {currencyName(c)}</option>
+                ))}
+              </select>
             </div>
 
             {/* Add a new person */}
