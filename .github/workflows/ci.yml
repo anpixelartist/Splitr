@@ -1,9 +1,9 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
+  # Pushes to main run this through deploy.yml, which deploys only if it passes
+  workflow_call:
 
 jobs:
   test:

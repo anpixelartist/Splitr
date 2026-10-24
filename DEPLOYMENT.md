@@ -59,7 +59,7 @@ npm install
 npx firebase-tools@15 login          # opens a browser, sign in with the same Google account
 npx firebase-tools@15 use --add      # pick your project, type "default" as the alias
 ```
-This creates a small `.firebaserc` file. It's fine to commit it.
+This creates a small `.firebaserc` file naming your project. Git ignores it on purpose: the project name is also your app's address (`<project>.web.app`), so keeping it out of a public repo keeps the address private.
 
 ### 6. Deploy
 ```bash
@@ -85,6 +85,23 @@ On phones, browsers block sign-in that hops between two websites, so Splitr sign
 It can take a few minutes to apply. Without it, Google shows **"Error 400: redirect_uri_mismatch"** when someone signs in.
 
 Open your URL and you're live 🎉
+
+---
+
+## Automatic deploys (optional, recommended)
+
+Once set up, every merge to `main` goes live by itself: GitHub runs lint, unit tests, the build and the security-rules tests, and deploys the site and rules only if all of them pass. It costs nothing: GitHub Actions is free for public repos, and deploying uses no Firebase quota.
+
+One-time setup (about 10 minutes):
+
+1. **Create a deploy key.** [Google Cloud console → IAM & Admin → Service Accounts](https://console.cloud.google.com/iam-admin/serviceaccounts) → your project → **Create service account**, name it `github-deploy`. Give it the roles **Firebase Admin** and **Service Usage Consumer**. Then open it → **Keys → Add key → Create new key → JSON**. A `.json` file downloads.
+2. **Add it to GitHub.** Your repo → **Settings → Secrets and variables → Actions → Secrets → New repository secret**. Name: `FIREBASE_SERVICE_ACCOUNT`. Value: the whole contents of the `.json` file. Then **delete the downloaded file**: anyone with it can deploy to your project.
+3. **Add the app config.** Same **Secrets** tab → add six more secrets with the same names and values as your `.env.local`: `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`. They must be *secrets*, not variables: a public repo's Actions logs are public, and GitHub hides secret values there as `***`. Three of them contain your project name, which is your app's address.
+4. *(Optional)* **Approve each deploy by hand.** Settings → **Environments → production → Required reviewers** → add yourself. Each deploy then waits for your click.
+
+Deploys show under the repo's **Actions** tab. To redeploy without a code change, open **Deploy → Run workflow**. If a missing setting would produce a broken build, the run stops and names the setting instead of deploying.
+
+**Undo a bad release:** Firebase console → **Hosting → Release history** → **Roll back** on the previous release (instant). Then revert the commit on `main` so the next deploy doesn't bring it back.
 
 ---
 

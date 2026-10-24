@@ -1,0 +1,69 @@
+name: Deploy
+
+# Every push to main that passes CI goes live on Firebase Hosting, together
+# with the Firestore security rules. One-time setup is in DEPLOYMENT.md
+# ("Automatic deploys"): seven repository secrets.
+#
+# The repo is public and so are these logs. The project ID is the app's
+# address (<project>.web.app), so it only ever comes from secrets, which
+# GitHub masks as *** in the logs; no URL is written here.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # "Run workflow" button, e.g. to redeploy after a console change
+
+# Never run two deploys at once; a newer push waits for the current one
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+      VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+      VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+      VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+      VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+      VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # Without these the build silently falls back to local-only mode and
+      # would ship an app that can't sync. Stop instead.
+      - name: Check deploy settings are present
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          missing=0
+          for v in VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN VITE_FIREBASE_PROJECT_ID \
+                   VITE_FIREBASE_STORAGE_BUCKET VITE_FIREBASE_MESSAGING_SENDER_ID VITE_FIREBASE_APP_ID; do
+            if [ -z "${!v}" ]; then echo "::error::Repository secret $v is not set"; missing=1; fi
+          done
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then echo "::error::Secret FIREBASE_SERVICE_ACCOUNT is not set"; missing=1; fi
+          exit $missing
+
+      - run: npm run build
+
+      - name: Deploy hosting and Firestore rules
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          key="$RUNNER_TEMP/firebase-sa.json"
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$key"
+          GOOGLE_APPLICATION_CREDENTIALS="$key" npx firebase-tools@15 deploy \
+            --only hosting,firestore --project "$VITE_FIREBASE_PROJECT_ID" --non-interactive \
+            --message "Deploy ${GITHUB_SHA::7}"
+          rm -f "$key"
