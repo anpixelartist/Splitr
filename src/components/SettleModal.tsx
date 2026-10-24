@@ -69,7 +69,7 @@ export const SettleModal: React.FC<Props> = ({
 
       {/* ── Success card — rendered as sibling to avoid overflow-hidden clipping the animation ── */}
       {done ? (
-        <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col items-center px-8 pt-10 pb-8">
+        <div className="bg-surface w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col items-center px-8 pt-10 pb-8">
           <div className="anim-pop-in w-24 h-24 bg-green-500 rounded-full flex items-center justify-center shadow-xl shadow-green-200 mb-5">
             <CheckCircle2 className="w-12 h-12 text-white" strokeWidth={2.5} />
           </div>
@@ -98,7 +98,7 @@ export const SettleModal: React.FC<Props> = ({
         </div>
       ) : (
         /* ── Normal modal ───────────────────────────────────────────────────── */
-        <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col max-h-[90vh] overflow-hidden">
+        <div className="bg-surface w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col max-h-[90vh] overflow-hidden">
 
           {/* Header */}
           <div className="p-4 border-b flex justify-between items-center shrink-0">
@@ -130,11 +130,11 @@ export const SettleModal: React.FC<Props> = ({
                   onClick={() => toggle(key)}
                   disabled={recording}
                   className={`w-full flex items-center gap-3 p-4 rounded-xl border transition-colors text-left ${
-                    isSelected ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200 hover:bg-gray-50'
+                    isSelected ? 'bg-blue-50 border-blue-200' : 'bg-surface border-gray-200 hover:bg-gray-50'
                   } disabled:opacity-60`}
                 >
                   <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
-                    isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'
+                    isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-surface'
                   }`}>
                     {isSelected && (
                       <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">

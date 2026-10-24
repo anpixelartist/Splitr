@@ -45,7 +45,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           {toasts.map(toast => (
             <div
               key={toast.id}
-              className={`flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl bg-gray-900 text-white pointer-events-auto ${
+              className={`flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl bg-slate-800 dark:bg-slate-700 dark:ring-1 dark:ring-white/10 text-white pointer-events-auto ${
                 toast.exiting ? 'anim-toast-out' : 'anim-toast-in'
               }`}
             >

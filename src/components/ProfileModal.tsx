@@ -1,7 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Pencil, Check, Trash2, Plus, UserCircle, LogOut } from 'lucide-react';
+import { X, Pencil, Check, Trash2, Plus, UserCircle, LogOut, Monitor, Sun, Moon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { getThemePref, setThemePref, type ThemePref } from '../lib/theme';
+
+const THEME_OPTIONS = [
+  { value: 'system', label: 'System', Icon: Monitor },
+  { value: 'light', label: 'Light', Icon: Sun },
+  { value: 'dark', label: 'Dark', Icon: Moon },
+] as const;
 
 interface Props {
   onClose: () => void;
@@ -16,6 +23,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   const { showToast } = useToast();
+  const [themePref, setThemePrefState] = useState<ThemePref>(getThemePref);
 
   // Contacts
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -65,7 +73,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-4">
-      <div className="bg-white w-full max-w-md rounded-2xl shadow-xl flex flex-col max-h-[90vh]">
+      <div className="bg-surface w-full max-w-md rounded-2xl shadow-xl flex flex-col max-h-[90vh]">
 
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b shrink-0">
@@ -79,7 +87,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
 
           {/* ── Identity ── */}
           <section className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-2xl shrink-0 select-none">
+            <div className="w-14 h-14 rounded-full bg-blue-100 text-blue-700 dark:text-blue-300 flex items-center justify-center font-bold text-2xl shrink-0 select-none">
               {(draftName || userName).charAt(0).toUpperCase()}
             </div>
 
@@ -96,7 +104,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
                     }}
                     className="flex-1 border-b-2 border-blue-500 outline-none text-lg font-semibold py-0.5 bg-transparent"
                   />
-                  <button onClick={saveName} className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg">
+                  <button onClick={saveName} className="p-1.5 text-green-600 dark:text-green-400 hover:bg-green-50 rounded-lg">
                     <Check className="w-4 h-4" />
                   </button>
                   <button
@@ -126,6 +134,28 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
             </div>
           </section>
 
+          {/* ── Appearance ── */}
+          <section>
+            <h3 className="font-semibold text-gray-700 mb-3">Appearance</h3>
+            <div className="grid grid-cols-3 bg-gray-100 rounded-xl p-1" role="radiogroup" aria-label="Theme">
+              {THEME_OPTIONS.map(({ value, label, Icon }) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={themePref === value}
+                  onClick={() => { setThemePref(value); setThemePrefState(value); }}
+                  className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    themePref === value ? 'bg-surface shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </section>
+
           {/* ── Account / Auth ── */}
           <section>
             <h3 className="font-semibold text-gray-700 mb-3">Account</h3>
@@ -135,13 +165,13 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
                   <img src={user.photoURL} alt="" className="w-10 h-10 rounded-full shrink-0" referrerPolicy="no-referrer" />
                 ) : (
                   <div className="w-10 h-10 rounded-full bg-blue-200 flex items-center justify-center shrink-0">
-                    <UserCircle className="w-6 h-6 text-blue-600" />
+                    <UserCircle className="w-6 h-6 text-blue-600 dark:text-blue-400" />
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-gray-900 truncate">{userName}</p>
                   {user?.email && <p className="text-xs text-gray-500 truncate">{user.email}</p>}
-                  <p className="text-xs text-green-600 mt-0.5">Synced with Google</p>
+                  <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">Synced with Google</p>
                 </div>
                 <button
                   onClick={async () => { await signOut(); onClose(); }}
@@ -164,7 +194,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
                   <p className="text-xs text-gray-400 mt-0.5">Sign in with Google to use it on all your devices — your groups come with you.</p>
                 </div>
                 {googleError && (
-                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                  <p className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 border border-amber-200 rounded-lg p-2">
                     {googleError}
                   </p>
                 )}
@@ -181,7 +211,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
                     }
                   }}
                   disabled={googleLoading}
-                  className="w-full flex items-center justify-center gap-2.5 bg-white border-2 border-gray-200 hover:border-blue-400 text-gray-800 font-semibold py-3 rounded-xl transition-all disabled:opacity-60"
+                  className="w-full flex items-center justify-center gap-2.5 bg-surface border-2 border-gray-200 hover:border-blue-400 text-gray-800 font-semibold py-3 rounded-xl transition-all disabled:opacity-60"
                 >
                   {googleLoading ? (
                     <span className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
@@ -238,7 +268,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
                 No contacts yet. Add people you split with often so you can quickly pick them when creating a group.
               </p>
             ) : (
-              <div className="rounded-xl border divide-y bg-white">
+              <div className="rounded-xl border divide-y bg-surface">
                 {contacts.map(contact => {
                   const isEditing = editingContactId === contact.id;
                   const isConfirming = confirmDeleteId === contact.id;
@@ -269,7 +299,7 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
                       <div className="flex items-center gap-1 shrink-0">
                         {isEditing ? (
                           <>
-                            <button onClick={commitContactEdit} className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg">
+                            <button onClick={commitContactEdit} className="p-1.5 text-green-600 dark:text-green-400 hover:bg-green-50 rounded-lg">
                               <Check className="w-4 h-4" />
                             </button>
                             <button onClick={() => setEditingContactId(null)} className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg">

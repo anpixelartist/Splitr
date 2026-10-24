@@ -64,7 +64,7 @@ export const CreateGroupModal: React.FC<Props> = ({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-4">
-      <div className="bg-white w-full max-w-md rounded-2xl shadow-xl flex flex-col max-h-[90vh]">
+      <div className="bg-surface w-full max-w-md rounded-2xl shadow-xl flex flex-col max-h-[90vh]">
 
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b shrink-0">
@@ -127,7 +127,7 @@ export const CreateGroupModal: React.FC<Props> = ({
               </div>
               {/* Success confirmation */}
               {addedName && (
-                <p className="anim-fade-in-up mt-1.5 text-sm text-green-600 flex items-center gap-1">
+                <p className="anim-fade-in-up mt-1.5 text-sm text-green-600 dark:text-green-400 flex items-center gap-1">
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span><strong>{addedName}</strong> added and selected</span>
                 </p>
@@ -141,7 +141,7 @@ export const CreateGroupModal: React.FC<Props> = ({
                   <Users className="w-4 h-4 text-gray-400" />
                   Your contacts
                   {selectedIds.size > 0 && (
-                    <span className="text-blue-600 font-semibold">
+                    <span className="text-blue-600 dark:text-blue-400 font-semibold">
                       — {selectedIds.size} selected
                     </span>
                   )}
@@ -169,7 +169,7 @@ export const CreateGroupModal: React.FC<Props> = ({
                             ? <Check className="w-4 h-4" />
                             : contact.name.charAt(0).toUpperCase()}
                         </div>
-                        <span className={`font-medium ${isSelected ? 'text-blue-700' : 'text-gray-800'}`}>
+                        <span className={`font-medium ${isSelected ? 'text-blue-700 dark:text-blue-300' : 'text-gray-800'}`}>
                           {contact.name}
                         </span>
                       </button>
@@ -189,13 +189,13 @@ export const CreateGroupModal: React.FC<Props> = ({
                   {selectedContacts.map(c => (
                     <span
                       key={c.id}
-                      className="inline-flex items-center gap-1 bg-blue-100 text-blue-700 text-sm px-3 py-1 rounded-full"
+                      className="inline-flex items-center gap-1 bg-blue-100 text-blue-700 dark:text-blue-300 text-sm px-3 py-1 rounded-full"
                     >
                       {c.name}
                       <button
                         type="button"
                         onClick={() => toggleContact(c.id)}
-                        className="ml-0.5 hover:text-blue-900"
+                        className="ml-0.5 hover:text-blue-900 dark:hover:text-blue-300"
                       >
                         <X className="w-3 h-3" />
                       </button>

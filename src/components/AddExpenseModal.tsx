@@ -93,11 +93,11 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4">
       {/* Modal card — position:relative so the success overlay can sit on top */}
-      <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col max-h-[90vh] relative overflow-hidden">
+      <div className="bg-surface w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col max-h-[90vh] relative overflow-hidden">
 
         {/* ── Success overlay ─────────────────────────────────────────────── */}
         {saved && (
-          <div className="absolute inset-0 bg-white flex flex-col items-center justify-center z-20 rounded-t-2xl sm:rounded-2xl">
+          <div className="absolute inset-0 bg-surface flex flex-col items-center justify-center z-20 rounded-t-2xl sm:rounded-2xl">
             <div className="anim-pop-in w-24 h-24 bg-green-500 rounded-full flex items-center justify-center shadow-xl shadow-green-200 mb-5">
               <CheckCircle2 className="w-12 h-12 text-white" strokeWidth={2.5} />
             </div>
@@ -108,7 +108,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
         )}
 
         {/* ── Header ──────────────────────────────────────────────────────── */}
-        <div className="p-4 border-b flex justify-between items-center sticky top-0 bg-white rounded-t-2xl z-10">
+        <div className="p-4 border-b flex justify-between items-center sticky top-0 bg-surface rounded-t-2xl z-10">
           <h2 className="text-xl font-bold">Add Expense</h2>
           <button onClick={onClose} disabled={saving} className="p-2 rounded-full hover:bg-gray-100 disabled:opacity-40" aria-label="Close">
             <X className="w-6 h-6 text-gray-500" />
@@ -117,7 +117,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
 
         {/* ── Inline error banner ──────────────────────────────────────────── */}
         {error && (
-          <div className="anim-fade-in mx-4 mt-3 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-start gap-2">
+          <div className="anim-fade-in mx-4 mt-3 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 dark:text-red-300 flex items-start gap-2">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>
@@ -179,7 +179,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
                       type="button"
                       disabled={saving}
                       className={`px-3 py-1 rounded-md text-sm font-medium capitalize transition-colors ${
-                        splitMethod === m ? 'bg-white shadow-sm' : 'text-gray-500'
+                        splitMethod === m ? 'bg-surface shadow-sm' : 'text-gray-500'
                       }`}
                       onClick={() => setSplitMethod(m)}
                     >
@@ -196,7 +196,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users }) => {
                     <label key={u.id} className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
                       <input
                         type="checkbox"
-                        className="w-5 h-5 rounded text-blue-600 focus:ring-blue-500"
+                        className="w-5 h-5 rounded text-blue-600 dark:text-blue-400 focus:ring-blue-500"
                         checked={!excludedUsers.has(u.id)}
                         onChange={e => {
                           const checked = e.target.checked;
