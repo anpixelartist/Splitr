@@ -2,14 +2,15 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { db, isFirebaseConfigured } from '../firebase/config';
 import {
   collection, query, where, onSnapshot, doc, getDoc, getDocs,
-  setDoc, updateDoc, deleteDoc, arrayUnion, writeBatch, deleteField, FieldPath,
+  setDoc, updateDoc, deleteDoc, arrayUnion, writeBatch, deleteField, FieldPath, serverTimestamp,
   type DocumentReference,
 } from 'firebase/firestore';
-import type { Group, Expense, SettlementRecord } from '../types';
+import type { Group, Expense, SettlementRecord, PaymentStatus } from '../types';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { calculateBalances, isSettled, validateExpense } from '../lib/settlement';
 import { applyClaims, resolveId } from '../lib/claims';
+import { initialStatus, countsTowardBalances } from '../lib/payments';
 import { v4 as uuidv4 } from 'uuid';
 
 // ─── Firestore layout ────────────────────────────────────────────────────────
@@ -57,6 +58,20 @@ function lsGetMigrating<T>(scopedKey: string, legacyKey: string): T[] {
   } catch { /* storage blocked */ }
   return lsGet<T>(scopedKey);
 }
+
+// Server timestamps arrive as Firestore Timestamps (or null while a local
+// write is pending); keep plain milliseconds in state and localStorage.
+const toMillis = (v: unknown): number | undefined =>
+  v && typeof (v as { toMillis?: unknown }).toMillis === 'function'
+    ? (v as { toMillis: () => number }).toMillis()
+    : typeof v === 'number' ? v : undefined;
+
+const readSettlement = (data: Record<string, unknown>, id: string): SettlementRecord => ({
+  ...(data as unknown as SettlementRecord),
+  id,
+  recordedAt: toMillis(data.recordedAt),
+  decidedAt: toMillis(data.decidedAt),
+});
 
 const byNewest = (a: { createdAt: string }, b: { createdAt: string }) =>
   new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
@@ -107,6 +122,8 @@ interface GroupContextType {
   addExpense: (expense: Omit<Expense, 'id' | 'createdAt' | 'createdBy'>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   recordSettlements: (transactions: { from: string; to: string; amount: number }[]) => Promise<void>;
+  /** Confirm, reject or undo a recorded payment (who may do what: lib/payments.ts). */
+  decidePayment: (id: string, status: PaymentStatus) => Promise<void>;
   promoteToAdmin: (uid: string) => Promise<void>;
   demoteAdmin: (uid: string) => Promise<void>;
   deleteGroup: () => Promise<void>;
@@ -127,6 +144,7 @@ const GroupContext = createContext<GroupContextType>({
   addExpense: async () => {},
   deleteExpense: async () => {},
   recordSettlements: async () => {},
+  decidePayment: async () => {},
   promoteToAdmin: async () => {},
   demoteAdmin: async () => {},
   deleteGroup: async () => {},
@@ -313,7 +331,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       settlementsCol(gid),
       (snapshot) => {
         if (snapshot.empty && snapshot.metadata.fromCache) return;
-        const data = snapshot.docs.map(d => ({ ...d.data(), id: d.id })) as SettlementRecord[];
+        const data = snapshot.docs.map(d => readSettlement(d.data({ serverTimestamps: 'estimate' }), d.id));
         data.sort(byNewest);
         setSettlementRecords(data);
         lsSave(settlementsLsKey(uid, gid), data);
@@ -509,6 +527,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const gid = currentGroupId;
 
     const now = new Date().toISOString();
+    const members = currentGroup?.members ?? [];
     const newRecords: SettlementRecord[] = transactions.map(t => ({
       id: uuidv4(),
       groupId: gid,
@@ -517,6 +536,8 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       amount: t.amount,
       recordedBy: uid,
       createdAt: now,
+      status: initialStatus(uid, t.to, members),
+      recordedAt: Date.now(), // replaced by the server's time on write
     }));
 
     // 1. Instant local update
@@ -529,9 +550,21 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // 2. Background Firebase sync (one atomic batch)
     remote(() => {
       const batch = writeBatch(db);
-      newRecords.forEach(r => batch.set(doc(settlementsCol(gid), r.id), r));
+      newRecords.forEach(r => batch.set(doc(settlementsCol(gid), r.id), { ...r, recordedAt: serverTimestamp() }));
       return batch.commit();
     }, 'record the settlement');
+  };
+
+  const decidePayment = async (id: string, status: PaymentStatus) => {
+    if (!currentGroupId || !uid) return;
+    const gid = currentGroupId;
+    setSettlementRecords(prev => {
+      const updated = prev.map(r => r.id === id ? { ...r, status, decidedBy: uid, decidedAt: Date.now() } : r);
+      lsSave(settlementsLsKey(uid, gid), updated);
+      return updated;
+    });
+    const what = status === 'confirmed' ? 'confirm the payment' : status === 'rejected' ? 'reject the payment' : 'undo the payment';
+    remote(() => updateDoc(doc(settlementsCol(gid), id), { status, decidedBy: uid, decidedAt: serverTimestamp() }), what);
   };
 
   // Settlement records are deliberately kept: they are money that really
@@ -588,7 +621,8 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const leaveGroup = async (): Promise<boolean> => {
     if (!currentGroup || !uid) return false;
-    const myBalance = calculateBalances(resolved.expenses, resolved.settlements)[uid]?.netBalance ?? 0;
+    const counted = resolved.settlements.filter(r => countsTowardBalances(r));
+    const myBalance = calculateBalances(resolved.expenses, counted)[uid]?.netBalance ?? 0;
     if (!isSettled(myBalance)) return false;
 
     const gid = currentGroup.id;
@@ -657,7 +691,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       expenses: resolved.expenses, settlementRecords: resolved.settlements,
       loading, isAdmin, isMember,
       createGroup, joinGroup, claimParticipant, unlinkClaim,
-      addExpense, deleteExpense, recordSettlements,
+      addExpense, deleteExpense, recordSettlements, decidePayment,
       promoteToAdmin, demoteAdmin, deleteGroup, leaveGroup,
       getUsersInGroup, getMemberName,
     }}>

@@ -72,6 +72,27 @@ service cloud.firestore {
           && !d.addedKeys().hasAny(resource.data.members));
     }
 
+    // The receiver is a name-only member nobody has claimed: nobody can confirm.
+    function receiverCantConfirm(g, to) {
+      return !(to in g.members) && !(to in g.get('claims', {}));
+    }
+
+    // The receiver of a payment: a member, or whoever claimed the placeholder.
+    function isReceiver(g, to) {
+      return request.auth.uid == to || g.get('claims', {}).get(to, '') == request.auth.uid;
+    }
+
+    // Allowed status changes. Older records have no status: they're confirmed.
+    function paymentChangeOk(g, p, next) {
+      let was = p.get('status', 'confirmed');
+      let recorder = p.get('recordedBy', '');
+      return (isReceiver(g, p.to) && was == 'pending' && next in ['confirmed', 'rejected'])
+        || (isReceiver(g, p.to) && was == 'confirmed' && next == 'cancelled')
+        || (request.auth.uid == recorder && was == 'pending' && next == 'cancelled')
+        || (receiverCantConfirm(g, p.to) && was == 'confirmed' && next == 'cancelled'
+            && (request.auth.uid == recorder || isAdminOf(g)));
+    }
+
     function validName(s, max) {
       return s is string && s.size() > 0 && s.size() <= max;
     }
@@ -175,11 +196,19 @@ service cloud.firestore {
       }
 
       // ── Settlement payments ───────────────────────────────────────────────
+      // A payment counts once the receiver confirms it. It is confirmed from
+      // the start only when the receiver records it, or the receiver is a
+      // name-only member who can't confirm. Same logic: src/lib/payments.ts.
       match /settlements/{settlementId} {
         allow read: if isMemberOf(groupAt(gid));
 
         allow create: if isMemberOf(groupAt(gid))
-          && hasExactly(['id', 'groupId', 'from', 'to', 'amount', 'recordedBy', 'createdAt'])
+          && hasExactly(['id', 'groupId', 'from', 'to', 'amount', 'recordedBy', 'createdAt', 'status', 'recordedAt'])
+          && request.resource.data.recordedAt == request.time
+          && request.resource.data.status == (
+               (request.resource.data.to == request.auth.uid
+                 || receiverCantConfirm(groupAt(gid), request.resource.data.to))
+               ? 'confirmed' : 'pending')
           && request.resource.data.id == settlementId
           && request.resource.data.groupId == gid
           && request.resource.data.recordedBy == request.auth.uid
@@ -189,7 +218,13 @@ service cloud.firestore {
           && request.resource.data.from != request.resource.data.to
           && validMoney(request.resource.data.amount);
 
-        allow update: if false;
+        // Only the status changes, stamped with who and when
+        allow update: if isMemberOf(groupAt(gid))
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'decidedBy', 'decidedAt'])
+          && request.resource.data.decidedBy == request.auth.uid
+          && request.resource.data.decidedAt == request.time
+          && paymentChangeOk(groupAt(gid), resource.data, request.resource.data.status);
         allow delete: if canPurge(groupAt(gid));
       }
     }
