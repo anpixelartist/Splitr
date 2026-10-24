@@ -12,6 +12,12 @@ export default defineConfig({
       devOptions: {
         enabled: false
       },
+      workbox: {
+        // Google sign-in runs through Firebase's helper pages at /__/auth/* on
+        // this same site. If the service worker answers those with the app's
+        // index.html, the account picker returns and nothing happens.
+        navigateFallbackDenylist: [/^\/__\//],
+      },
       manifest: {
         name: 'Splitr',
         short_name: 'Splitr',
