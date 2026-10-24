@@ -178,6 +178,21 @@ describe('expenses', () => {
   it('rejects invalid amounts', async () => {
     await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 'e5'), { ...expense('e5', 'bob'), amount: -5 }));
     await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 'e6'), { ...expense('e6', 'bob'), amount: '30' }));
+    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 'e7'), { ...expense('e7', 'bob'), amount: 30.005 }));
+    await assertSucceeds(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 'e8'), { ...expense('e8', 'bob'), amount: 0.29 }));
+    await assertSucceeds(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 'e9'), { ...expense('e9', 'bob'), amount: 99999999.99 }));
+  });
+
+  it('rejects unknown or missing fields', async () => {
+    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 'x1'), { ...expense('x1', 'bob'), junk: 'x'.repeat(1000) }));
+    const { createdAt: _omit, ...noDate } = expense('x2', 'bob');
+    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 'x2'), noDate));
+    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'settlements', 'x3'), { ...settlement('x3', 'bob'), junk: 1 }));
+    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'settlements', 'x4'), { ...settlement('x4', 'bob'), amount: 0.001 }));
+    await assertFails(setDoc(doc(as('carl'), 'groups', 'NEW234'), {
+      id: 'NEW234', name: 'G', members: ['carl'], admins: ['carl'], createdBy: 'carl',
+      memberNames: {}, participants: [], createdAt: '', junk: true,
+    }));
   });
 
   it('cannot be edited, and only admins can delete them', async () => {

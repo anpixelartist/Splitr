@@ -59,6 +59,19 @@ service cloud.firestore {
       return s is string && s.size() > 0 && s.size() <= max;
     }
 
+    // Exactly these fields, no more (stops junk that every member would download).
+    function hasExactly(keys) {
+      return request.resource.data.keys().hasOnly(keys)
+        && request.resource.data.keys().hasAll(keys);
+    }
+
+    // Positive, below 100M, and in whole cents (shares themselves are checked
+    // by the app: rules can't sum a list).
+    function validMoney(n) {
+      return n is number && n > 0 && n < 100000000
+        && math.abs(n * 100 - math.round(n * 100)) < 0.001;
+    }
+
     // ── Users ───────────────────────────────────────────────────────────────
 
     match /users/{userId} {
@@ -76,6 +89,8 @@ service cloud.firestore {
       // collision can never overwrite someone else's group.
       allow create: if signedIn()
         && gid.size() >= 4 && gid.size() <= 12
+        && request.resource.data.keys().hasOnly(
+             ['id', 'name', 'members', 'participants', 'createdBy', 'admins', 'memberNames', 'createdAt'])
         && validName(request.resource.data.name, 100)
         && request.resource.data.members == [request.auth.uid]
         && request.resource.data.admins == [request.auth.uid]
@@ -118,14 +133,14 @@ service cloud.firestore {
         allow read: if isMemberOf(groupAt(gid));
 
         allow create: if isMemberOf(groupAt(gid))
+          && hasExactly(['id', 'groupId', 'description', 'amount', 'paidBy', 'splits', 'createdBy', 'createdAt'])
           && request.resource.data.id == expenseId
           && request.resource.data.groupId == gid
           && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt is string
           && validName(request.resource.data.description, 200)
-          && request.resource.data.amount is number
-          && request.resource.data.amount > 0
-          && request.resource.data.amount < 100000000
-          && request.resource.data.paidBy is string
+          && validMoney(request.resource.data.amount)
+          && validName(request.resource.data.paidBy, 128)
           && request.resource.data.splits is list
           && request.resource.data.splits.size() > 0
           && request.resource.data.splits.size() <= 100;
@@ -140,15 +155,15 @@ service cloud.firestore {
         allow read: if isMemberOf(groupAt(gid));
 
         allow create: if isMemberOf(groupAt(gid))
+          && hasExactly(['id', 'groupId', 'from', 'to', 'amount', 'recordedBy', 'createdAt'])
           && request.resource.data.id == settlementId
           && request.resource.data.groupId == gid
           && request.resource.data.recordedBy == request.auth.uid
-          && request.resource.data.from is string
-          && request.resource.data.to is string
+          && request.resource.data.createdAt is string
+          && validName(request.resource.data.from, 128)
+          && validName(request.resource.data.to, 128)
           && request.resource.data.from != request.resource.data.to
-          && request.resource.data.amount is number
-          && request.resource.data.amount > 0
-          && request.resource.data.amount < 100000000;
+          && validMoney(request.resource.data.amount);
 
         allow update: if false;
         allow delete: if canPurge(groupAt(gid));
