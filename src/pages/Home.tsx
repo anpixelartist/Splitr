@@ -2,13 +2,13 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useGroup } from '../context/GroupContext';
-import { Wallet, Users, PlusCircle, UserPlus } from 'lucide-react';
+import { Wallet, Users, PlusCircle, UserPlus, Loader2, HardDrive } from 'lucide-react';
 import { CreateGroupModal } from '../components/CreateGroupModal';
 import { ProfileModal } from '../components/ProfileModal';
 import { useToast } from '../context/ToastContext';
 
 export const Home: React.FC = () => {
-  const { userName, contacts, addContact } = useAuth();
+  const { userName, contacts, addContact, isLocalOnly } = useAuth();
   const { groups, createGroup, joinGroup } = useGroup();
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -16,24 +16,44 @@ export const Home: React.FC = () => {
   const [joinCode, setJoinCode] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [joining, setJoining] = useState(false);
 
   const handleCreateGroup = async (
     groupName: string,
     participants: { id: string; name: string }[],
   ) => {
-    const id = await createGroup(groupName, participants);
-    setShowCreateModal(false);
-    navigate(`/group/${id}`);
+    try {
+      const id = await createGroup(groupName, participants);
+      setShowCreateModal(false);
+      navigate(`/group/${id}`);
+    } catch {
+      showToast("Couldn't create the group. Please try again.", 'error');
+    }
   };
 
   const handleJoinGroup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!joinCode.trim()) return;
-    const success = await joinGroup(joinCode.toUpperCase());
-    if (success) {
-      navigate(`/group/${joinCode.toUpperCase()}`);
-    } else {
-      showToast('Group not found — check the code and try again.', 'error');
+    const code = joinCode.trim().toUpperCase();
+    if (!code || joining) return;
+    setJoining(true);
+    const result = await joinGroup(code);
+    setJoining(false);
+    switch (result) {
+      case 'joined':
+        setJoinCode('');
+        navigate(`/group/${code}`);
+        break;
+      case 'not-found':
+        showToast('Group not found — check the code and try again.', 'error');
+        break;
+      case 'offline':
+        showToast("You're offline — connect to the internet to join a group.", 'error');
+        break;
+      case 'unavailable':
+        showToast('Joining groups needs the online version of Splitr (see DEPLOYMENT.md).', 'error');
+        break;
+      default:
+        showToast("Couldn't join the group. Please try again.", 'error');
     }
   };
 
@@ -55,6 +75,7 @@ export const Home: React.FC = () => {
           onClick={() => setShowProfile(true)}
           className="flex items-center gap-2 hover:opacity-80 transition-opacity"
           title="Profile & contacts"
+          aria-label="Profile & contacts"
         >
           <div className="w-9 h-9 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold text-sm select-none">
             {userName.charAt(0).toUpperCase()}
@@ -62,6 +83,13 @@ export const Home: React.FC = () => {
           <span className="text-sm font-medium text-gray-700 hidden sm:block">{userName}</span>
         </button>
       </header>
+
+      {isLocalOnly && (
+        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
+          <HardDrive className="w-4 h-4 shrink-0 mt-0.5" />
+          <p>Local-only mode: data is saved in this browser and can't be shared with other devices.</p>
+        </div>
+      )}
 
       {/* ── Actions ── */}
       <section className="space-y-4">
@@ -87,14 +115,19 @@ export const Home: React.FC = () => {
             <input
               type="text"
               placeholder="Enter Group Code"
+              aria-label="Group code"
+              autoCapitalize="characters"
+              autoComplete="off"
               className="flex-1 border rounded-xl px-4 py-2.5 uppercase focus:ring-2 focus:ring-green-500 outline-none tracking-widest"
               value={joinCode}
               onChange={e => setJoinCode(e.target.value)}
             />
             <button
               type="submit"
-              className="bg-green-600 text-white px-4 py-2.5 rounded-xl font-medium hover:bg-green-700 transition-colors"
+              disabled={joining}
+              className="bg-green-600 text-white px-4 py-2.5 rounded-xl font-medium hover:bg-green-700 transition-colors disabled:opacity-60 flex items-center gap-1.5"
             >
+              {joining && <Loader2 className="w-4 h-4 animate-spin" />}
               Join
             </button>
           </form>
@@ -112,10 +145,10 @@ export const Home: React.FC = () => {
         ) : (
           <div className="grid gap-3">
             {groups.map(group => (
-              <div
+              <button
                 key={group.id}
                 onClick={() => navigate(`/group/${group.id}`)}
-                className="bg-white p-4 rounded-xl border shadow-sm flex justify-between items-center cursor-pointer hover:border-blue-300 transition-colors"
+                className="w-full text-left bg-white p-4 rounded-xl border shadow-sm flex justify-between items-center cursor-pointer hover:border-blue-300 transition-colors"
               >
                 <div>
                   <h3 className="font-semibold text-lg">{group.name}</h3>
@@ -124,7 +157,7 @@ export const Home: React.FC = () => {
                 <div className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600 font-mono">
                   {group.id}
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         )}

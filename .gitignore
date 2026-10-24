@@ -23,3 +23,13 @@ dist-ssr
 *.sln
 *.sw?
 dev-dist/
+
+# Environment (real Firebase keys live in .env.local, which *.local already ignores)
+.env
+.env.production
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log

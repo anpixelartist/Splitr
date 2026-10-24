@@ -1,16 +1,31 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { db } from '../firebase/config';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { db, isFirebaseConfigured } from '../firebase/config';
 import {
-  collection, query, where, onSnapshot, doc, getDoc,
-  setDoc, updateDoc, deleteDoc, arrayUnion, arrayRemove,
+  collection, query, where, onSnapshot, doc, getDoc, getDocs,
+  setDoc, updateDoc, deleteDoc, arrayUnion, writeBatch,
+  type DocumentReference,
 } from 'firebase/firestore';
 import type { Group, Expense, SettlementRecord } from '../types';
 import { useAuth } from './AuthContext';
+import { useToast } from './ToastContext';
+import { calculateBalances, isSettled, validateExpense } from '../lib/settlement';
 import { v4 as uuidv4 } from 'uuid';
 
+// ─── Firestore layout ────────────────────────────────────────────────────────
+//   groups/{groupId}                      group doc (members, admins, names…)
+//   groups/{groupId}/expenses/{id}        expenses
+//   groups/{groupId}/settlements/{id}     recorded settlement payments
+//   users/{uid}                           profile + contacts
+// Sub-collections let the security rules restrict reads to group members.
+
+const groupDoc = (gid: string) => doc(db, 'groups', gid);
+const expensesCol = (gid: string) => collection(db, 'groups', gid, 'expenses');
+const settlementsCol = (gid: string) => collection(db, 'groups', gid, 'settlements');
+
 // ─── localStorage helpers ───────────────────────────────────────────────────
-// Used as a full fallback when Firebase is unavailable (e.g. mock API keys).
-// When Firebase is healthy these are just an optional cache.
+// The full store in local-only mode (no Firebase config); otherwise a cache so
+// the UI renders instantly before Firestore answers. Keys are scoped per user
+// so a shared device never shows one account's data to another.
 
 const lsKey = (k: string) => `splitr_${k}`;
 
@@ -18,70 +33,114 @@ function lsGet<T>(key: string): T[] {
   try { return JSON.parse(localStorage.getItem(lsKey(key)) || '[]'); } catch { return []; }
 }
 function lsSave(key: string, data: unknown) {
-  try { localStorage.setItem(lsKey(key), JSON.stringify(data)); } catch {}
+  try { localStorage.setItem(lsKey(key), JSON.stringify(data)); } catch { /* storage full / blocked */ }
 }
 function lsDel(key: string) {
-  try { localStorage.removeItem(lsKey(key)); } catch {}
+  try { localStorage.removeItem(lsKey(key)); } catch { /* ignore */ }
 }
 
 const groupsLsKey = (uid: string) => `groups_${uid}`;
-const expensesLsKey = (groupId: string) => `expenses_${groupId}`;
-const settlementsLsKey = (groupId: string) => `settlements_${groupId}`;
+const expensesLsKey = (uid: string, groupId: string) => `expenses_${uid}_${groupId}`;
+const settlementsLsKey = (uid: string, groupId: string) => `settlements_${uid}_${groupId}`;
+
+// Older versions stored expenses/settlements under unscoped keys. Move them
+// over the first time a group is opened so local-only data isn't lost.
+function lsGetMigrating<T>(scopedKey: string, legacyKey: string): T[] {
+  try {
+    if (localStorage.getItem(lsKey(scopedKey)) === null && localStorage.getItem(lsKey(legacyKey)) !== null) {
+      const legacy = lsGet<T>(legacyKey);
+      lsSave(scopedKey, legacy);
+      lsDel(legacyKey);
+      return legacy;
+    }
+  } catch { /* storage blocked */ }
+  return lsGet<T>(scopedKey);
+}
+
+const byNewest = (a: { createdAt: string }, b: { createdAt: string }) =>
+  new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+
+// ─── Group code generation ───────────────────────────────────────────────────
+// 6 chars from a 31-symbol alphabet without look-alikes (0/O, 1/I/L) ≈ 887M codes.
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const CODE_LENGTH = 6;
+
+const randomGroupCode = () => {
+  const bytes = new Uint8Array(CODE_LENGTH);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+};
 
 // ─── Admin helpers ───────────────────────────────────────────────────────────
 
-const resolveIsAdmin = (group: Group | null, uid: string | undefined): boolean => {
-  if (!group || !uid) return false;
-  if (group.admins && group.admins.length > 0) return group.admins.includes(uid);
-  return group.createdBy === uid; // backward compat: creator is admin on old groups
-};
+const adminsOf = (group: Group): string[] =>
+  group.admins && group.admins.length > 0
+    ? group.admins
+    : group.createdBy ? [group.createdBy] : []; // backward compat: creator is admin on old groups
+
+const resolveIsAdmin = (group: Group | null, uid: string | undefined): boolean =>
+  !!group && !!uid && adminsOf(group).includes(uid);
 
 // ─── Context types ───────────────────────────────────────────────────────────
+
+export type GroupStatus = 'idle' | 'loading' | 'ready' | 'not-found';
+export type JoinResult = 'joined' | 'not-found' | 'offline' | 'unavailable' | 'error';
 
 interface GroupContextType {
   groups: Group[];
   currentGroup: Group | null;
+  currentGroupStatus: GroupStatus;
   setCurrentGroupId: (id: string | null) => void;
   expenses: Expense[];
   settlementRecords: SettlementRecord[];
   loading: boolean;
   isAdmin: boolean;
+  isMember: boolean;
   createGroup: (name: string, participants?: { id: string; name: string }[]) => Promise<string>;
-  joinGroup: (groupId: string) => Promise<boolean>;
+  joinGroup: (groupId: string) => Promise<JoinResult>;
   addExpense: (expense: Omit<Expense, 'id' | 'createdAt' | 'createdBy'>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   recordSettlements: (transactions: { from: string; to: string; amount: number }[]) => Promise<void>;
   promoteToAdmin: (uid: string) => Promise<void>;
   demoteAdmin: (uid: string) => Promise<void>;
   deleteGroup: () => Promise<void>;
-  leaveGroup: () => Promise<void>;
+  /** Resolves false (and does nothing) while the user still owes or is owed money. */
+  leaveGroup: () => Promise<boolean>;
   getUsersInGroup: () => { id: string; name: string }[];
+  /** Name for any uid/participant id, including members who have left. */
+  getMemberName: (id: string) => string;
 }
 
 const GroupContext = createContext<GroupContextType>({
-  groups: [], currentGroup: null, setCurrentGroupId: () => {},
-  expenses: [], settlementRecords: [], loading: true, isAdmin: false,
+  groups: [], currentGroup: null, currentGroupStatus: 'idle', setCurrentGroupId: () => {},
+  expenses: [], settlementRecords: [], loading: true, isAdmin: false, isMember: false,
   createGroup: async () => '',
-  joinGroup: async () => false,
+  joinGroup: async () => 'error',
   addExpense: async () => {},
   deleteExpense: async () => {},
   recordSettlements: async () => {},
   promoteToAdmin: async () => {},
   demoteAdmin: async () => {},
   deleteGroup: async () => {},
-  leaveGroup: async () => {},
+  leaveGroup: async () => false,
   getUsersInGroup: () => [],
+  getMemberName: () => 'Unknown',
 });
 
+// eslint-disable-next-line react/only-export-components
 export const useGroup = () => useContext(GroupContext);
 
 // ─── Provider ────────────────────────────────────────────────────────────────
 
 export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, userName } = useAuth();
+  const { showToast } = useToast();
+  const uid = user?.uid;
+
   const [groups, setGroups] = useState<Group[]>([]);
   const [currentGroupId, setCurrentGroupId] = useState<string | null>(null);
   const [currentGroup, setCurrentGroup] = useState<Group | null>(null);
+  const [currentGroupStatus, setCurrentGroupStatus] = useState<GroupStatus>('idle');
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [settlementRecords, setSettlementRecords] = useState<SettlementRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -91,149 +150,238 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const groupsRef = useRef<Group[]>([]);
   useEffect(() => { groupsRef.current = groups; }, [groups]);
 
-  const isAdmin = resolveIsAdmin(currentGroup, user?.uid);
+  // True once the server has confirmed my membership (no pending local write).
+  // Subscribing to expenses earlier gets rejected by the security rules, e.g.
+  // right after creating a group that hasn't uploaded yet, or mid-join.
+  const [membershipSynced, setMembershipSynced] = useState(false);
+  // Bumped to re-subscribe after a listener was rejected
+  const [listenerRetry, setListenerRetry] = useState(0);
+
+  const isAdmin = resolveIsAdmin(currentGroup, uid);
+  const isMember = !!currentGroup && !!uid && currentGroup.members.includes(uid);
+  const canListen = isMember && (!isFirebaseConfigured || membershipSynced);
+
+  // Background Firestore write. Local state is already updated (optimistic UI);
+  // writes never block because offline writes only resolve once the server
+  // acknowledges them. A rejected write (e.g. permission denied) is reported.
+  const remote = useCallback((write: () => Promise<unknown>, what: string) => {
+    if (!isFirebaseConfigured) return;
+    write().catch((err) => {
+      console.error(`[Splitr] Failed to ${what}`, err);
+      showToast(`Couldn't ${what}. Please try again.`, 'error');
+    });
+  }, [showToast]);
+
+  const saveGroupsLocal = (next: Group[]) => {
+    groupsRef.current = next;
+    if (uid) lsSave(groupsLsKey(uid), next);
+  };
 
   // ── Listen for user's groups ──────────────────────────────────────────────
   useEffect(() => {
-    if (!user) return;
-
-    // Seed from localStorage immediately so the UI isn't blank while Firestore loads
-    const saved = lsGet<Group>(groupsLsKey(user.uid));
-    if (saved.length > 0) {
-      setGroups(saved);
-      groupsRef.current = saved;
+    // Always reset on account change so one user never sees another's groups
+    if (!uid) {
+      setGroups([]);
+      groupsRef.current = [];
       setLoading(false);
+      return;
     }
 
-    const q = query(
-      collection(db, 'groups'),
-      where('members', 'array-contains', user.uid),
-    );
+    const saved = lsGet<Group>(groupsLsKey(uid));
+    setGroups(saved);
+    groupsRef.current = saved;
+    setLoading(saved.length === 0 && isFirebaseConfigured);
 
+    if (!isFirebaseConfigured) return;
+
+    const q = query(collection(db, 'groups'), where('members', 'array-contains', uid));
     const unsub = onSnapshot(
       q,
       (snapshot) => {
-        const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as Group[];
-        if (data.length > 0) {
-          // Firestore has real data — use it and refresh the localStorage cache
-          setGroups(data);
-          groupsRef.current = data;
-          lsSave(groupsLsKey(user.uid), data);
-        }
-        // If Firestore returns empty (offline / mock keys) keep whatever was
-        // loaded from localStorage above — don't wipe the list.
+        // An empty answer from the local cache on first load just means "not
+        // synced yet" — keep the localStorage seed. Anything else is the truth,
+        // including an empty list from the server (all groups left/deleted).
+        if (snapshot.empty && snapshot.metadata.fromCache) { setLoading(false); return; }
+        const data = snapshot.docs.map(d => ({ ...d.data(), id: d.id })) as Group[];
+        setGroups(data);
+        groupsRef.current = data;
+        lsSave(groupsLsKey(uid), data);
         setLoading(false);
       },
-      () => {
-        // Error (e.g. invalid API key) — already seeded from localStorage above
+      (err) => {
+        console.error('[Splitr] groups listener failed', err);
         setLoading(false);
       },
     );
-
     return unsub;
-  }, [user]);
+  }, [uid]);
 
-  // ── Listen for currentGroup doc + its expenses ────────────────────────────
+  // ── Listen for the current group doc ──────────────────────────────────────
   useEffect(() => {
+    setMembershipSynced(false);
+    setListenerRetry(0);
     if (!currentGroupId) {
       setCurrentGroup(null);
-      setExpenses([]);
-      setSettlementRecords([]);
+      setCurrentGroupStatus('idle');
       return;
     }
 
     // Seed from local state so GroupDetails renders immediately
     const localGroup = groupsRef.current.find(g => g.id === currentGroupId) ?? null;
-    if (localGroup) setCurrentGroup(localGroup);
+    setCurrentGroup(localGroup);
+    setCurrentGroupStatus(localGroup ? 'ready' : isFirebaseConfigured ? 'loading' : 'not-found');
 
-    // Seed expenses and settlements from localStorage
-    const savedExpenses = lsGet<Expense>(expensesLsKey(currentGroupId));
-    if (savedExpenses.length > 0) setExpenses(savedExpenses);
+    if (!isFirebaseConfigured) return;
 
-    const savedSettlements = lsGet<SettlementRecord>(settlementsLsKey(currentGroupId));
-    if (savedSettlements.length > 0) setSettlementRecords(savedSettlements);
-
-    // Subscribe to the group document
-    const groupUnsub = onSnapshot(
-      doc(db, 'groups', currentGroupId),
+    return onSnapshot(
+      groupDoc(currentGroupId),
+      { includeMetadataChanges: true }, // so we hear when a pending write is acknowledged
       (docSnap) => {
         if (docSnap.exists()) {
-          setCurrentGroup({ id: docSnap.id, ...docSnap.data() } as Group);
+          const g = { ...docSnap.data(), id: docSnap.id } as Group;
+          setCurrentGroup(g);
+          setCurrentGroupStatus('ready');
+          setMembershipSynced(!!uid && g.members.includes(uid) && !docSnap.metadata.hasPendingWrites);
+        } else if (!docSnap.metadata.fromCache) {
+          // The server says it doesn't exist (wrong code, or deleted)
+          setCurrentGroup(null);
+          setCurrentGroupStatus('not-found');
         }
       },
-      () => { /* keep local seed */ },
+      (err) => {
+        console.error('[Splitr] group listener failed', err);
+        if (!localGroup) setCurrentGroupStatus('not-found');
+      },
     );
+  }, [currentGroupId, uid]);
 
-    // Subscribe to expenses
-    const expQ = query(
-      collection(db, 'expenses'),
-      where('groupId', '==', currentGroupId),
-    );
+  // ── Seed expenses + settlements from the local cache (members only) ────────
+  useEffect(() => {
+    if (!currentGroupId || !uid || !isMember) {
+      setExpenses([]);
+      setSettlementRecords([]);
+      return;
+    }
+    const gid = currentGroupId;
+    setExpenses(lsGetMigrating<Expense>(expensesLsKey(uid, gid), `expenses_${gid}`));
+    setSettlementRecords(lsGetMigrating<SettlementRecord>(settlementsLsKey(uid, gid), `settlements_${gid}`));
+  }, [currentGroupId, uid, isMember]);
+
+  // ── Listen for expenses + settlements once membership is confirmed ─────────
+  useEffect(() => {
+    if (!isFirebaseConfigured || !currentGroupId || !uid || !canListen) return;
+    const gid = currentGroupId;
+
+    // A rejected listener is dead; try again a few times (e.g. the rules saw a
+    // membership change a moment before it landed).
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const onListenError = (what: string) => (err: unknown) => {
+      console.error(`[Splitr] ${what} listener failed`, err);
+      if (listenerRetry < 3 && !retryTimer) {
+        retryTimer = setTimeout(() => setListenerRetry(n => n + 1), 1500 * (listenerRetry + 1));
+      }
+    };
 
     const expUnsub = onSnapshot(
-      expQ,
+      expensesCol(gid),
       (snapshot) => {
-        const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as Expense[];
-        data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        if (data.length > 0) {
-          setExpenses(data);
-          lsSave(expensesLsKey(currentGroupId), data);
-        }
+        if (snapshot.empty && snapshot.metadata.fromCache) return;
+        const data = snapshot.docs.map(d => ({ ...d.data(), id: d.id })) as Expense[];
+        data.sort(byNewest);
+        setExpenses(data);
+        lsSave(expensesLsKey(uid, gid), data);
       },
-      () => { /* keep localStorage seed */ },
-    );
-
-    // Subscribe to settlement records
-    const settQ = query(
-      collection(db, 'settlements'),
-      where('groupId', '==', currentGroupId),
+      onListenError('expenses'),
     );
 
     const settUnsub = onSnapshot(
-      settQ,
+      settlementsCol(gid),
       (snapshot) => {
-        const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as SettlementRecord[];
-        data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        if (data.length > 0) {
-          setSettlementRecords(data);
-          lsSave(settlementsLsKey(currentGroupId), data);
-        }
+        if (snapshot.empty && snapshot.metadata.fromCache) return;
+        const data = snapshot.docs.map(d => ({ ...d.data(), id: d.id })) as SettlementRecord[];
+        data.sort(byNewest);
+        setSettlementRecords(data);
+        lsSave(settlementsLsKey(uid, gid), data);
       },
-      () => { /* keep localStorage seed */ },
+      onListenError('settlements'),
     );
 
     return () => {
-      groupUnsub();
+      clearTimeout(retryTimer);
       expUnsub();
       settUnsub();
     };
-  }, [currentGroupId]);
+  }, [currentGroupId, uid, canListen, listenerRetry]);
 
-  // ── CRUD ──────────────────────────────────────────────────────────────────
+  // ── Keep my display name current in every group I'm in ────────────────────
+  // Each group caches member names; this fixes them up after a rename.
+  const nameSyncAttempts = useRef(new Set<string>());
+  useEffect(() => {
+    if (!isFirebaseConfigured || !uid || !userName) return;
+    for (const g of groups) {
+      if (!g.members.includes(uid) || g.memberNames?.[uid] === userName) continue;
+      const attempt = `${g.id}:${userName}`;
+      if (nameSyncAttempts.current.has(attempt)) continue; // don't retry-loop on failure
+      nameSyncAttempts.current.add(attempt);
+      updateDoc(groupDoc(g.id), { [`memberNames.${uid}`]: userName }).catch(() => {});
+    }
+  }, [groups, uid, userName]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  // Apply a group update to all local state and localStorage immediately,
-  // then sync to Firebase in the background (fire-and-forget).
+  // Apply a group update to all local state and localStorage immediately
   const updateGroupLocally = (updated: Group) => {
     setCurrentGroup(updated);
     setGroups(prev => {
       const next = prev.map(g => g.id === updated.id ? updated : g);
-      groupsRef.current = next;
-      if (user) lsSave(groupsLsKey(user.uid), next);
+      saveGroupsLocal(next);
       return next;
     });
+  };
+
+  const removeGroupLocally = (gid: string) => {
+    if (uid) {
+      lsDel(expensesLsKey(uid, gid));
+      lsDel(settlementsLsKey(uid, gid));
+    }
+    setGroups(prev => {
+      const next = prev.filter(g => g.id !== gid);
+      saveGroupsLocal(next);
+      return next;
+    });
+    setExpenses([]);
+    setSettlementRecords([]);
+    setCurrentGroup(null);
+  };
+
+  // Deletes a group with all its expenses and settlements. Queries the server
+  // so nothing is orphaned; falls back to what's loaded locally when offline.
+  const purgeGroup = async (gid: string, knownExpenses: Expense[], knownSettlements: SettlementRecord[]) => {
+    let refs: DocumentReference[];
+    try {
+      const [exp, sett] = await Promise.all([getDocs(expensesCol(gid)), getDocs(settlementsCol(gid))]);
+      refs = [...exp.docs.map(d => d.ref), ...sett.docs.map(d => d.ref)];
+    } catch {
+      refs = [
+        ...knownExpenses.map(e => doc(expensesCol(gid), e.id)),
+        ...knownSettlements.map(s => doc(settlementsCol(gid), s.id)),
+      ];
+    }
+    // Batches hold up to 500 writes; the group doc goes last so the security
+    // rules can still see the group while its children are being deleted.
+    const all = [...refs, groupDoc(gid)];
+    for (let i = 0; i < all.length; i += 450) {
+      const batch = writeBatch(db);
+      all.slice(i, i + 450).forEach(ref => batch.delete(ref));
+      await batch.commit();
+    }
   };
 
   // ── CRUD — all use optimistic updates ────────────────────────────────────
   //
   // Pattern for every write:
-  //   1. Update local state + localStorage IMMEDIATELY (synchronous, instant UI)
-  //   2. setDoc/updateDoc/deleteDoc fires in the background without await
-  //
-  // Why: Firestore offline persistence queues writes and retries forever —
-  // `await setDoc(...)` never rejects, so awaiting it hangs indefinitely
-  // when Firebase is unavailable (e.g. mock API keys, no network).
+  //   1. Update local state + localStorage IMMEDIATELY (instant UI, works offline)
+  //   2. Sync to Firestore in the background via remote(), which reports failures
 
   const createGroup = async (
     name: string,
@@ -241,7 +389,20 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   ): Promise<string> => {
     if (!user) throw new Error('Must be logged in');
 
-    const groupId = Math.random().toString(36).substring(2, 8).toUpperCase();
+    // Avoid codes that are already taken. Offline we can't check, but the
+    // security rules reject overwriting an existing group anyway.
+    let groupId = randomGroupCode();
+    if (isFirebaseConfigured && navigator.onLine) {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          if (!(await getDoc(groupDoc(groupId))).exists()) break;
+        } catch {
+          break;
+        }
+        groupId = randomGroupCode();
+      }
+    }
+
     const newGroup: Group = {
       id: groupId, name,
       members: [user.uid],
@@ -255,164 +416,160 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // 1. Instant local update
     const updated = [...groupsRef.current, newGroup];
     setGroups(updated);
-    groupsRef.current = updated;
-    lsSave(groupsLsKey(user.uid), updated);
+    saveGroupsLocal(updated);
 
     // 2. Background Firebase sync
-    setDoc(doc(db, 'groups', groupId), newGroup).catch(() => {});
+    remote(() => setDoc(groupDoc(groupId), newGroup), 'create the group');
 
     return groupId;
   };
 
-  const joinGroup = async (groupId: string): Promise<boolean> => {
-    if (!user) return false;
-    const groupRef = doc(db, 'groups', groupId);
+  const joinGroup = async (rawCode: string): Promise<JoinResult> => {
+    if (!user) return 'error';
+    const groupId = rawCode.trim().toUpperCase();
+    if (!groupId) return 'not-found';
+    if (!isFirebaseConfigured) return 'unavailable';
+    if (groupsRef.current.some(g => g.id === groupId)) return 'joined';
+    if (!navigator.onLine) return 'offline';
+
     try {
-      const groupDoc = await getDoc(groupRef);
-      if (!groupDoc.exists()) return false;
+      const snap = await getDoc(groupDoc(groupId));
+      if (!snap.exists()) return 'not-found';
+      if ((snap.data() as Group).members?.includes(user.uid)) return 'joined';
       // Add member uid + store display name so others can show our name without Firestore reads
-      await updateDoc(groupRef, {
+      await updateDoc(groupDoc(groupId), {
         members: arrayUnion(user.uid),
         [`memberNames.${user.uid}`]: userName,
       });
-      return true;
-    } catch {
-      return false;
+      return 'joined';
+    } catch (err) {
+      console.error('[Splitr] join failed', err);
+      return navigator.onLine ? 'error' : 'offline';
     }
   };
 
   const addExpense = async (expenseData: Omit<Expense, 'id' | 'createdAt' | 'createdBy'>) => {
-    if (!currentGroupId) return;
+    if (!currentGroupId || !uid) return;
+    const gid = currentGroupId;
+
+    // Refuse to write an expense that would create or destroy money
+    const problem = validateExpense(expenseData, getUsersInGroup().map(u => u.id));
+    if (problem) throw new Error(problem);
 
     const newExpense: Expense = {
       ...expenseData,
       id: uuidv4(),
-      createdBy: user?.uid,
+      createdBy: uid,
       createdAt: new Date().toISOString(),
     };
 
     // 1. Instant local update
     setExpenses(prev => {
       const updated = [newExpense, ...prev];
-      lsSave(expensesLsKey(currentGroupId), updated);
+      lsSave(expensesLsKey(uid, gid), updated);
       return updated;
     });
 
     // 2. Background Firebase sync
-    setDoc(doc(db, 'expenses', newExpense.id), newExpense).catch(() => {});
+    remote(() => setDoc(doc(expensesCol(gid), newExpense.id), newExpense), 'save the expense');
   };
 
   const recordSettlements = async (
     transactions: { from: string; to: string; amount: number }[],
   ) => {
-    if (!currentGroupId || !user) return;
+    if (!currentGroupId || !uid) return;
+    const gid = currentGroupId;
 
     const now = new Date().toISOString();
     const newRecords: SettlementRecord[] = transactions.map(t => ({
       id: uuidv4(),
-      groupId: currentGroupId,
+      groupId: gid,
       from: t.from,
       to: t.to,
       amount: t.amount,
-      recordedBy: user.uid,
+      recordedBy: uid,
       createdAt: now,
     }));
 
     // 1. Instant local update
     setSettlementRecords(prev => {
       const updated = [...newRecords, ...prev];
-      lsSave(settlementsLsKey(currentGroupId), updated);
+      lsSave(settlementsLsKey(uid, gid), updated);
       return updated;
     });
 
-    // 2. Background Firebase sync
-    newRecords.forEach(record => {
-      setDoc(doc(db, 'settlements', record.id), record).catch(() => {});
-    });
+    // 2. Background Firebase sync (one atomic batch)
+    remote(() => {
+      const batch = writeBatch(db);
+      newRecords.forEach(r => batch.set(doc(settlementsCol(gid), r.id), r));
+      return batch.commit();
+    }, 'record the settlement');
   };
 
+  // Settlement records are deliberately kept: they are money that really
+  // changed hands, so balances stay correct after an expense is removed.
   const deleteExpense = async (id: string) => {
-    if (!isAdmin) return;
-    // Capture settlements before clearing — they were based on the old expense
-    // state; after deletion the balances change and they'd create phantom debts.
-    const settlementsCopy = [...settlementRecords];
+    if (!isAdmin || !currentGroupId || !uid) return;
+    const gid = currentGroupId;
 
-    // 1. Instant local update
     setExpenses(prev => {
       const updated = prev.filter(e => e.id !== id);
-      if (currentGroupId) lsSave(expensesLsKey(currentGroupId), updated);
+      lsSave(expensesLsKey(uid, gid), updated);
       return updated;
     });
 
-    if (settlementsCopy.length > 0) {
-      setSettlementRecords([]);
-      if (currentGroupId) lsDel(settlementsLsKey(currentGroupId));
-    }
-
-    // 2. Background Firebase sync
-    deleteDoc(doc(db, 'expenses', id)).catch(() => {});
-    settlementsCopy.forEach(s => deleteDoc(doc(db, 'settlements', s.id)).catch(() => {}));
+    remote(() => deleteDoc(doc(expensesCol(gid), id)), 'delete the expense');
   };
 
-  const promoteToAdmin = async (uid: string) => {
+  const promoteToAdmin = async (memberUid: string) => {
     if (!currentGroup || !isAdmin) return;
-    const admins = [...new Set([...(currentGroup.admins || [currentGroup.createdBy || '']).filter(Boolean), uid])];
+    const admins = [...new Set([...adminsOf(currentGroup), memberUid])];
 
-    // 1. Instant local update
     updateGroupLocally({ ...currentGroup, admins });
-
-    // 2. Background Firebase sync
-    updateDoc(doc(db, 'groups', currentGroup.id), { admins: arrayUnion(uid) }).catch(() => {});
+    // Write the full list: on legacy groups (no `admins` field) arrayUnion would
+    // drop the creator's implicit admin role.
+    remote(() => updateDoc(groupDoc(currentGroup.id), { admins }), 'update admins');
   };
 
-  const demoteAdmin = async (uid: string) => {
+  const demoteAdmin = async (memberUid: string) => {
     if (!currentGroup || !isAdmin) return;
-    const admins = currentGroup.admins || [];
-    if (admins.length <= 1) return; // never remove the last admin
+    const current = adminsOf(currentGroup);
+    if (current.length <= 1) return; // never remove the last admin
+    const admins = current.filter(a => a !== memberUid);
 
-    // 1. Instant local update
-    updateGroupLocally({ ...currentGroup, admins: admins.filter(a => a !== uid) });
-
-    // 2. Background Firebase sync
-    updateDoc(doc(db, 'groups', currentGroup.id), { admins: arrayRemove(uid) }).catch(() => {});
+    updateGroupLocally({ ...currentGroup, admins });
+    remote(() => updateDoc(groupDoc(currentGroup.id), { admins }), 'update admins');
   };
 
-  const leaveGroup = async () => {
-    if (!currentGroup || !user) return;
+  const leaveGroup = async (): Promise<boolean> => {
+    if (!currentGroup || !uid) return false;
+    const myBalance = calculateBalances(expenses, settlementRecords)[uid]?.netBalance ?? 0;
+    if (!isSettled(myBalance)) return false;
+
     const gid = currentGroup.id;
-    const myUid = user.uid;
-    const otherFirebaseMembers = currentGroup.members.filter(m => m !== myUid);
+    const otherMembers = currentGroup.members.filter(m => m !== uid);
+    const expensesCopy = [...expenses];
+    const settlementsCopy = [...settlementRecords];
 
-    // Admin succession: if I'm the last admin, auto-promote the first remaining Firebase member
-    const currentAdmins = currentGroup.admins?.length
-      ? currentGroup.admins
-      : currentGroup.createdBy ? [currentGroup.createdBy] : [];
-    const isLastAdmin = currentAdmins.includes(myUid) && currentAdmins.every(a => a === myUid);
-    const newAdmins = isLastAdmin && otherFirebaseMembers.length > 0
-      ? [otherFirebaseMembers[0]]
-      : currentAdmins.filter(a => a !== myUid);
+    // Admin succession: if I'm the last admin, auto-promote the first remaining member
+    const currentAdmins = adminsOf(currentGroup);
+    const remainingAdmins = currentAdmins.filter(a => a !== uid && otherMembers.includes(a));
+    const newAdmins = remainingAdmins.length > 0 ? remainingAdmins : otherMembers.slice(0, 1);
 
-    // 1. Instant local: remove from my groups list
-    setGroups(prev => {
-      const next = prev.filter(g => g.id !== gid);
-      groupsRef.current = next;
-      lsSave(groupsLsKey(myUid), next);
-      return next;
-    });
-    setCurrentGroup(null);
-    setExpenses([]);
-    setSettlementRecords([]);
+    removeGroupLocally(gid);
 
-    // 2. Background Firebase
-    if (otherFirebaseMembers.length === 0) {
-      // Last Firebase member leaving — delete the whole group
-      deleteDoc(doc(db, 'groups', gid)).catch(() => {});
+    if (otherMembers.length === 0) {
+      // Last member leaving — delete the whole group and its data
+      remote(() => purgeGroup(gid, expensesCopy, settlementsCopy), 'delete the group');
     } else {
-      updateDoc(doc(db, 'groups', gid), {
-        members: arrayRemove(myUid),
-        admins: newAdmins,
-      }).catch(() => {});
+      // memberNames is kept so past expenses still show this member's name.
+      // Only admins may touch `admins` (security rules), so others send members only.
+      const change = currentAdmins.includes(uid)
+        ? { members: otherMembers, admins: newAdmins }
+        : { members: otherMembers };
+      remote(() => updateDoc(groupDoc(gid), change), 'leave the group');
     }
+    return true;
   };
 
   const deleteGroup = async () => {
@@ -421,48 +578,39 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const expensesCopy = [...expenses];
     const settlementsCopy = [...settlementRecords];
 
-    // 1. Instant local cleanup
-    lsDel(expensesLsKey(gid));
-    lsDel(settlementsLsKey(gid));
-    setGroups(prev => {
-      const next = prev.filter(g => g.id !== gid);
-      groupsRef.current = next;
-      if (user) lsSave(groupsLsKey(user.uid), next);
-      return next;
-    });
-    setExpenses([]);
-    setSettlementRecords([]);
-    setCurrentGroup(null);
-
-    // 2. Background Firebase cleanup
-    expensesCopy.forEach(e => deleteDoc(doc(db, 'expenses', e.id)).catch(() => {}));
-    settlementsCopy.forEach(s => deleteDoc(doc(db, 'settlements', s.id)).catch(() => {}));
-    deleteDoc(doc(db, 'groups', gid)).catch(() => {});
+    removeGroupLocally(gid);
+    remote(() => purgeGroup(gid, expensesCopy, settlementsCopy), 'delete the group');
   };
 
   // Synchronous — reads names from the group's memberNames cache (no Firestore calls).
-  // Names are written into memberNames when creating or joining a group.
-  const getUsersInGroup = React.useCallback((): { id: string; name: string }[] => {
+  const getUsersInGroup = useCallback((): { id: string; name: string }[] => {
     if (!currentGroup) return [];
 
-    const memberUsers = currentGroup.members.map(uid => ({
-      id: uid,
-      name: uid === user?.uid
+    const memberUsers = currentGroup.members.map(m => ({
+      id: m,
+      name: m === uid
         ? userName
-        : currentGroup.memberNames?.[uid] ?? `Member ${uid.substring(0, 4)}`,
+        : currentGroup.memberNames?.[m] ?? `Member ${m.substring(0, 4)}`,
     }));
 
     return [...memberUsers, ...(currentGroup.participants ?? [])];
-  }, [currentGroup, user, userName]);
+  }, [currentGroup, uid, userName]);
+
+  const getMemberName = useCallback((id: string): string => {
+    if (id === uid) return userName;
+    return currentGroup?.memberNames?.[id]
+      ?? currentGroup?.participants?.find(p => p.id === id)?.name
+      ?? 'Former member';
+  }, [currentGroup, uid, userName]);
 
   return (
     <GroupContext.Provider value={{
-      groups, currentGroup, setCurrentGroupId,
-      expenses, settlementRecords, loading, isAdmin,
+      groups, currentGroup, currentGroupStatus, setCurrentGroupId,
+      expenses, settlementRecords, loading, isAdmin, isMember,
       createGroup, joinGroup,
       addExpense, deleteExpense, recordSettlements,
       promoteToAdmin, demoteAdmin, deleteGroup, leaveGroup,
-      getUsersInGroup,
+      getUsersInGroup, getMemberName,
     }}>
       {children}
     </GroupContext.Provider>

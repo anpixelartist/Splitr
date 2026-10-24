@@ -2,8 +2,8 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useGroup } from '../context/GroupContext';
 import { useAuth } from '../context/AuthContext';
-import { ArrowLeft, Receipt, Share2, Plus, Crown, Trash2, CheckCircle2, MoreVertical, LogOut, ChevronDown } from 'lucide-react';
-import { calculateBalances, calculateSettlements } from '../lib/settlement';
+import { ArrowLeft, Receipt, Share2, Plus, Crown, Trash2, CheckCircle2, MoreVertical, LogOut, ChevronDown, SearchX, UserPlus, Loader2 } from 'lucide-react';
+import { calculateBalances, calculateSettlements, isSettled } from '../lib/settlement';
 import { AddExpenseModal } from '../components/AddExpenseModal';
 import { SettleModal } from '../components/SettleModal';
 import { useToast } from '../context/ToastContext';
@@ -14,6 +14,10 @@ export const GroupDetails: React.FC = () => {
   const { user } = useAuth();
   const {
     currentGroup,
+    currentGroupStatus,
+    isMember,
+    joinGroup,
+    getMemberName,
     setCurrentGroupId,
     expenses,
     settlementRecords,
@@ -36,6 +40,7 @@ export const GroupDetails: React.FC = () => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [showAllHistory, setShowAllHistory] = useState(false);
+  const [joining, setJoining] = useState(false);
 
   useEffect(() => {
     if (id) setCurrentGroupId(id);
@@ -75,7 +80,7 @@ export const GroupDetails: React.FC = () => {
     expenses.every(e => e.createdAt <= (lastSettledAt ?? ''));
 
   const getUserName = (uid: string) =>
-    groupUsers.find(u => u.id === uid)?.name ?? 'Unknown';
+    groupUsers.find(u => u.id === uid)?.name ?? getMemberName(uid);
 
   const isFirebaseMember = (uid: string) =>
     currentGroup?.members.includes(uid) ?? false;
@@ -86,16 +91,38 @@ export const GroupDetails: React.FC = () => {
     return currentGroup.createdBy === uid;
   };
 
-  const handleShare = () => {
+  const handleShare = async () => {
+    if (!currentGroup) return;
+    const url = `${window.location.origin}/group/${currentGroup.id}`;
     if (navigator.share) {
-      navigator.share({
-        title: `Join ${currentGroup?.name} on Splitr`,
-        text: `Join my group using code: ${currentGroup?.id}`,
-        url: window.location.href,
-      });
-    } else {
-      navigator.clipboard?.writeText(currentGroup?.id || '');
+      try {
+        await navigator.share({
+          title: `Join ${currentGroup.name} on Splitr`,
+          text: `Join my group "${currentGroup.name}" on Splitr — code: ${currentGroup.id}`,
+          url,
+        });
+        return;
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return; // user cancelled
+      }
     }
+    try {
+      await navigator.clipboard.writeText(`Join "${currentGroup.name}" on Splitr: ${url} (code ${currentGroup.id})`);
+      showToast('Invite link copied');
+    } catch {
+      showToast(`Group code: ${currentGroup.id}`);
+    }
+  };
+
+  const handleJoin = async () => {
+    if (!id) return;
+    setJoining(true);
+    const result = await joinGroup(id);
+    setJoining(false);
+    if (result === 'joined') showToast(`Joined ${currentGroup?.name ?? 'group'}`);
+    else if (result === 'offline') showToast("You're offline — connect to join this group.", 'error');
+    else if (result === 'not-found') showToast('This group no longer exists.', 'error');
+    else showToast("Couldn't join the group. Please try again.", 'error');
   };
 
   const handleDeleteExpense = async (expenseId: string) => {
@@ -106,9 +133,18 @@ export const GroupDetails: React.FC = () => {
 
   const handleLeaveGroup = async () => {
     setShowGroupMenu(false);
+    const myBalance = balances[user?.uid || '']?.netBalance || 0;
+    if (!isSettled(myBalance)) {
+      showToast(
+        myBalance < 0
+          ? `Settle the $${Math.abs(myBalance).toFixed(2)} you owe before leaving.`
+          : `You're still owed $${myBalance.toFixed(2)} — settle up before leaving.`,
+        'error',
+      );
+      return;
+    }
     if (!window.confirm(`Leave "${currentGroup?.name}"? You'll need the group code to rejoin.`)) return;
-    await leaveGroup();
-    navigate('/');
+    if (await leaveGroup()) navigate('/');
   };
 
   const handleDeleteGroup = async () => {
@@ -118,15 +154,64 @@ export const GroupDetails: React.FC = () => {
     navigate('/');
   };
 
+  if (currentGroupStatus === 'not-found') {
+    return (
+      <div className="max-w-md mx-auto min-h-screen flex flex-col items-center justify-center p-8 text-center">
+        <SearchX className="w-12 h-12 text-gray-300 mb-4" />
+        <h1 className="text-xl font-bold text-gray-800 mb-1">Group not found</h1>
+        <p className="text-gray-500 mb-6">
+          The code <span className="font-mono">{id}</span> doesn't match any group. It may have been deleted.
+        </p>
+        <button onClick={() => navigate('/')} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-medium hover:bg-blue-700">
+          Back to my groups
+        </button>
+      </div>
+    );
+  }
+
   if (!currentGroup) {
-    return <div className="p-8 text-center text-gray-500">Loading group...</div>;
+    return (
+      <div className="p-8 text-center text-gray-500">
+        <Loader2 className="w-6 h-6 animate-spin mx-auto mb-3 text-gray-400" />
+        Loading group…
+        {!navigator.onLine && <p className="text-xs mt-2">You're offline — this group isn't saved on this device yet.</p>}
+      </div>
+    );
+  }
+
+  // Visiting a shared link for a group you haven't joined yet
+  if (!isMember) {
+    return (
+      <div className="max-w-md mx-auto min-h-screen flex flex-col items-center justify-center p-8 text-center">
+        <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mb-4">
+          <UserPlus className="w-8 h-8 text-blue-600" />
+        </div>
+        <p className="text-sm text-gray-500 mb-1">You've been invited to</p>
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">{currentGroup.name}</h1>
+        <p className="text-sm text-gray-400 mb-6">
+          {currentGroup.members.length + (currentGroup.participants?.length ?? 0)} members · code{' '}
+          <span className="font-mono">{currentGroup.id}</span>
+        </p>
+        <button
+          onClick={handleJoin}
+          disabled={joining}
+          className="w-full bg-green-600 text-white py-3 rounded-xl font-semibold hover:bg-green-700 disabled:opacity-60 flex items-center justify-center gap-2"
+        >
+          {joining && <Loader2 className="w-5 h-5 animate-spin" />}
+          Join group
+        </button>
+        <button onClick={() => navigate('/')} className="mt-3 text-sm text-gray-500 hover:text-gray-700">
+          Not now
+        </button>
+      </div>
+    );
   }
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-gray-50 flex flex-col relative">
       <header className="bg-white border-b sticky top-0 z-10">
         <div className="p-4 flex items-center justify-between">
-          <button onClick={() => navigate('/')} className="p-2 -ml-2 rounded-full hover:bg-gray-100">
+          <button onClick={() => navigate('/')} className="p-2 -ml-2 rounded-full hover:bg-gray-100" aria-label="Back">
             <ArrowLeft className="w-6 h-6 text-gray-700" />
           </button>
           <div className="flex-1 text-center">
@@ -137,12 +222,13 @@ export const GroupDetails: React.FC = () => {
             </p>
           </div>
           <div className="flex items-center gap-1 -mr-1">
-            <button onClick={handleShare} className="p-2 rounded-full hover:bg-gray-100 text-blue-600">
+            <button onClick={handleShare} className="p-2 rounded-full hover:bg-gray-100 text-blue-600" aria-label="Invite people">
               <Share2 className="w-5 h-5" />
             </button>
             <button
               onClick={() => setShowGroupMenu(true)}
               className="p-2 rounded-full hover:bg-gray-100 text-gray-500"
+              aria-label="Group options"
             >
               <MoreVertical className="w-5 h-5" />
             </button>
@@ -217,9 +303,6 @@ export const GroupDetails: React.FC = () => {
                         {isAdmin && (
                           isConfirming ? (
                             <div className="flex flex-col items-end gap-1">
-                              {settlementRecords.length > 0 && (
-                                <p className="text-xs text-amber-600">Also clears settlement history</p>
-                              )}
                               <div className="flex items-center gap-1">
                                 <button
                                   onClick={() => setConfirmDeleteId(null)}
@@ -239,6 +322,7 @@ export const GroupDetails: React.FC = () => {
                             <button
                               onClick={() => handleDeleteExpense(expense.id)}
                               className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                              aria-label={`Delete ${expense.description}`}
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -322,16 +406,16 @@ export const GroupDetails: React.FC = () => {
                 )
               ) : (
                 <div className="space-y-2">
-                  {settlementPlan.map((s, i) => (
-                    <div key={i} className="bg-white p-4 rounded-xl border shadow-sm flex items-center justify-between">
+                  {settlementPlan.map(s => (
+                    <div key={`${s.from}-${s.to}`} className="bg-white p-4 rounded-xl border shadow-sm flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center font-bold text-gray-600 text-xs">
                           {getUserName(s.from).charAt(0)}
                         </div>
                         <div className="text-sm">
                           <span className="font-semibold">{s.from === user?.uid ? 'You' : getUserName(s.from)}</span>
-                          <span className="text-gray-500 mx-1">owes</span>
-                          <span className="font-semibold">{s.to === user?.uid ? 'You' : getUserName(s.to)}</span>
+                          <span className="text-gray-500 mx-1">{s.from === user?.uid ? 'owe' : 'owes'}</span>
+                          <span className="font-semibold">{s.to === user?.uid ? 'you' : getUserName(s.to)}</span>
                         </div>
                       </div>
                       <span className="font-bold text-gray-900">${s.amount.toFixed(2)}</span>
@@ -377,7 +461,7 @@ export const GroupDetails: React.FC = () => {
                             </span>
                             <span className="text-gray-400 mx-1">paid</span>
                             <span className="line-through text-gray-500 font-semibold">
-                              {r.to === user?.uid ? 'You' : getUserName(r.to)}
+                              {r.to === user?.uid ? 'you' : getUserName(r.to)}
                             </span>
                           </div>
                         </div>
@@ -423,7 +507,9 @@ export const GroupDetails: React.FC = () => {
                             {u.name}{isMe && ' (You)'}
                           </span>
                           {memberIsAdmin && (
-                            <Crown className="w-3.5 h-3.5 text-amber-500 shrink-0" title="Admin" />
+                            <span title="Admin" aria-label="Admin" className="shrink-0">
+                              <Crown className="w-3.5 h-3.5 text-amber-500" />
+                            </span>
                           )}
                           {!memberIsFirebase && (
                             <span className="text-xs text-gray-400 border border-gray-200 rounded px-1">offline</span>
