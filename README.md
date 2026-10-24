@@ -29,7 +29,7 @@ Without Firebase keys, the app runs in **local-only mode**: everything is stored
 | `npm test` | Unit tests (`src/**/*.test.ts`) |
 | `npm run test:rules` | Firestore security-rules tests on the emulator (needs Java 11+) |
 | `npm run lint` | oxlint |
-| `npm run deploy` | Build and deploy hosting + rules to Firebase |
+| `npm run deploy` | Build and deploy hosting + rules to Firebase (merges to `main` deploy automatically once set up, see DEPLOYMENT.md) |
 
 ## Project layout
 
