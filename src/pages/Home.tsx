@@ -2,13 +2,13 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useGroup } from '../context/GroupContext';
-import { Wallet, Users, PlusCircle, UserPlus, Loader2, HardDrive } from 'lucide-react';
+import { Wallet, Users, PlusCircle, UserPlus, Loader2, HardDrive, AlertTriangle, X } from 'lucide-react';
 import { CreateGroupModal } from '../components/CreateGroupModal';
 import { ProfileModal } from '../components/ProfileModal';
 import { useToast } from '../context/ToastContext';
 
 export const Home: React.FC = () => {
-  const { userName, contacts, addContact, isLocalOnly } = useAuth();
+  const { userName, contacts, addContact, isLocalOnly, authError, clearAuthError } = useAuth();
   const { groups, createGroup, joinGroup } = useGroup();
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -92,6 +92,17 @@ export const Home: React.FC = () => {
       )}
 
       <div className="space-y-8 lg:space-y-0 lg:grid lg:grid-cols-[22rem_minmax(0,1fr)] lg:gap-8 lg:items-start">
+      {/* A Google sign-in that failed after a redirect lands here, not in Profile */}
+      {authError && (
+        <div role="alert" className="anim-fade-in flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700 dark:text-red-300">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <p className="flex-1">{authError}</p>
+          <button onClick={clearAuthError} className="p-1 -m-1 rounded hover:bg-red-100" aria-label="Dismiss">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* ── Actions ── */}
       <section className="space-y-4">
         <div className="bg-surface p-6 rounded-xl shadow-sm border">
