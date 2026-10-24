@@ -25,9 +25,18 @@ if (!isFirebaseConfigured) {
   );
 }
 
+// Google sign-in must run on the same site the app was opened on. Browsers
+// now block the storage a cross-site sign-in helper needs, so a redirect from
+// my-app.web.app through my-app.firebaseapp.com comes back empty (the user
+// picks an account and nothing happens). Firebase Hosting serves the helper
+// at /__/auth/handler on every hosting domain, so use the current one there.
+const onFirebaseHosting = /\.(web\.app|firebaseapp\.com)$/.test(window.location.hostname);
+
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'mock-key',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'mock.firebaseapp.com',
+  authDomain: onFirebaseHosting
+    ? window.location.hostname
+    : import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'mock.firebaseapp.com',
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || (useEmulators ? 'demo-splitr' : 'mock-project'),
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'mock.appspot.com',
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '123456789',

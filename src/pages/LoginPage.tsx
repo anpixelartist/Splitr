@@ -14,8 +14,8 @@ export const LoginPage: React.FC = () => {
     try {
       await signInWithGoogle();
       // onAuthStateChanged will update the user → App re-renders to Home
-    } catch {
-      setError('Google sign-in failed. Please try again, or continue without an account.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Google sign-in failed. Please try again.');
     } finally {
       setGoogleLoading(false);
     }

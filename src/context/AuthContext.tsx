@@ -15,6 +15,9 @@ import type { Contact } from '../types';
 // ─── Persistence key ──────────────────────────────────────────────────────────
 // 'google' | 'offline' | 'signed-out' | null (first time)
 const AUTH_PREF_KEY = 'splitr_auth_choice';
+// Set while the page is away at Google for a redirect sign-in, so we can tell
+// "came back without a result" (a silent failure) from a normal page load.
+const PENDING_REDIRECT_KEY = 'splitr_pending_google';
 const MOCK_UID = 'mock-user-123';
 
 interface AuthContextType {
@@ -33,6 +36,7 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   continueOffline: () => Promise<void>;
   authError: string | null;
+  clearAuthError: () => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -46,6 +50,7 @@ const AuthContext = createContext<AuthContextType>({
   signOut: async () => {},
   continueOffline: async () => {},
   authError: null,
+  clearAuthError: () => {},
 });
 
 // eslint-disable-next-line react/only-export-components
@@ -67,7 +72,8 @@ const lsSetPref = (v: string) => { try { localStorage.setItem(AUTH_PREF_KEY, v);
 
 const hasExistingLocalData = () => {
   try {
-    return Object.keys(localStorage).some(k => k.startsWith('splitr_') && k !== AUTH_PREF_KEY);
+    return Object.keys(localStorage).some(k =>
+      k.startsWith('splitr_') && k !== AUTH_PREF_KEY && k !== PENDING_REDIRECT_KEY && k !== 'splitr_theme');
   } catch { return false; }
 };
 
@@ -78,6 +84,30 @@ const isDefaultName = (name: string) => !name || name === 'You' || /^User [\w-]{
 const shouldFallBackToRedirect = (err: unknown) => {
   const code = (err as AuthError)?.code;
   return code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment';
+};
+
+const setPendingRedirect = (on: boolean) => {
+  try {
+    if (on) localStorage.setItem(PENDING_REDIRECT_KEY, '1'); else localStorage.removeItem(PENDING_REDIRECT_KEY);
+  } catch { /* ignore */ }
+};
+const hadPendingRedirect = () => { try { return localStorage.getItem(PENDING_REDIRECT_KEY) === '1'; } catch { return false; } };
+
+/** A message people can act on, with the Firebase code for whoever debugs it. */
+export const describeAuthError = (err: unknown): string => {
+  const code = (err as AuthError)?.code ?? '';
+  switch (code) {
+    case 'auth/network-request-failed':
+      return 'No internet connection. Connect and try again.';
+    case 'auth/unauthorized-domain':
+      return `Google sign-in isn't enabled for ${window.location.hostname} yet (auth/unauthorized-domain).`;
+    case 'auth/popup-blocked':
+      return 'Your browser blocked the Google sign-in window. Allow pop-ups for this site and try again.';
+    case 'auth/web-storage-unsupported':
+      return 'This browser is blocking the storage Google sign-in needs. Try again in Chrome or Safari, outside private mode.';
+    default:
+      return `Google sign-in didn't finish${code ? ` (${code})` : ''}. Please try again.`;
+  }
 };
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
@@ -143,8 +173,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const credential = GoogleAuthProvider.credentialFromError(err as AuthError);
     if (!credential) throw err;
     const ok = window.confirm(
-      'This Google account already has Splitr data.\n\n' +
-      'Switch to it? Groups you created without an account on this device will stay with the old offline profile.',
+      'This Google account is already used with Splitr, so your guest data can\'t be moved into it.\n\n' +
+      'If you switch, the groups, expenses and contacts you made as a guest on this device will no longer be ' +
+      'reachable from here. Groups shared with friends still exist, and you can rejoin them with their codes.\n\n' +
+      'Switch to the Google account anyway?',
     );
     if (!ok) return;
     await signInWithCredential(auth, credential);
@@ -159,13 +191,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // Finish a redirect-based sign-in / link (mobile popup fallback)
+    const expectingResult = hadPendingRedirect();
+    setPendingRedirect(false);
     getRedirectResult(auth)
-      .then(result => { if (result?.user) adoptGoogleProfile(result.user); })
+      .then(result => {
+        if (result?.user) { adoptGoogleProfile(result.user); return; }
+        // We sent the user to Google but nothing came back, and they're still
+        // a guest: say so instead of silently showing the same screen again.
+        if (expectingResult && (!auth.currentUser || auth.currentUser.isAnonymous)) {
+          setAuthError(describeAuthError(null) + ' Your data on this device is unchanged.');
+        }
+      })
       .catch(err => {
+        console.error('[Splitr] Google redirect sign-in failed', err);
         if ((err as AuthError)?.code === 'auth/credential-already-in-use') {
-          handleLinkConflict(err).catch(() => setAuthError('Google sign-in failed. Please try again.'));
+          handleLinkConflict(err).catch(e => setAuthError(describeAuthError(e)));
         } else if (err) {
-          setAuthError('Google sign-in failed. Please try again.');
+          setAuthError(describeAuthError(err));
         }
       });
 
@@ -223,6 +265,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if ((err as AuthError)?.code === 'auth/credential-already-in-use') {
             await handleLinkConflict(err);
           } else if (shouldFallBackToRedirect(err)) {
+            setPendingRedirect(true);
             await linkWithRedirect(current, provider);
           } else {
             throw err;
@@ -232,15 +275,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           await signInWithPopup(auth, provider);
         } catch (err) {
-          if (shouldFallBackToRedirect(err)) await signInWithRedirect(auth, provider);
-          else throw err;
+          if (shouldFallBackToRedirect(err)) {
+            setPendingRedirect(true);
+            await signInWithRedirect(auth, provider);
+          } else throw err;
         }
       }
     } catch (err) {
       // The user closing the popup isn't an error worth showing
       if ((err as AuthError)?.code === 'auth/popup-closed-by-user'
         || (err as AuthError)?.code === 'auth/cancelled-popup-request') return;
-      throw err;
+      setPendingRedirect(false);
+      console.error('[Splitr] Google sign-in failed', err);
+      throw new Error(describeAuthError(err));
     }
   };
 
@@ -312,6 +359,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updateUserName, userName,
       contacts, addContact, updateContact, removeContact,
       signInWithGoogle, signOut, continueOffline, authError,
+      clearAuthError: () => setAuthError(null),
     }}>
       {!loading && children}
     </AuthContext.Provider>

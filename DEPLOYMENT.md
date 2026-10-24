@@ -72,7 +72,19 @@ This builds the app and uploads three things: the website, the **security rules*
 Hosting URL: https://splitr-yourname.web.app
 ```
 
-Open it and you're live 🎉
+### 7. Allow Google sign-in from your site (required, once)
+
+On phones, browsers block sign-in that hops between two websites, so Splitr signs people in on the same site they opened (`splitr-yourname.web.app`). Google has to be told that site is allowed:
+
+1. Open the [Google Cloud console credentials page](https://console.cloud.google.com/apis/credentials) and pick your project.
+2. Under **OAuth 2.0 Client IDs**, open **Web client (auto created by Google Service)**.
+3. Under **Authorized redirect URIs**, add both of these, then **Save**:
+   - `https://splitr-yourname.web.app/__/auth/handler`
+   - `https://splitr-yourname.firebaseapp.com/__/auth/handler` (usually already there)
+
+It can take a few minutes to apply. Without it, Google shows **"Error 400: redirect_uri_mismatch"** when someone signs in.
+
+Open your URL and you're live 🎉
 
 ---
 
@@ -133,7 +145,8 @@ Why reads stay low: the app keeps an offline copy of your data, so reopening it 
 |---|---|
 | Yellow banner **"Local-only mode"** on the live site | `.env.local` was missing or incomplete when you ran `npm run deploy`. Fix it and deploy again. |
 | **Google sign-in fails** with `auth/unauthorized-domain` | Authentication → **Settings → Authorized domains** → add the domain you opened the app on. `*.web.app`, `*.firebaseapp.com` and `localhost` are there by default. |
-| **Google sign-in doesn't finish on iPhone** (installed app or Safari) | Use your hosting domain for sign-in: (1) Google Cloud console → **APIs & Services → Credentials** → the OAuth client "Web client (auto created by Google Service)" → add `https://splitr-yourname.web.app/__/auth/handler` under *Authorized redirect URIs* → Save. (2) Set `VITE_FIREBASE_AUTH_DOMAIN=splitr-yourname.web.app` in `.env.local`. (3) `npm run deploy`. |
+| Google shows **"Error 400: redirect_uri_mismatch"** | Step 7 is missing: add `https://<the site you opened>/__/auth/handler` to the OAuth client's *Authorized redirect URIs*. |
+| You pick a Google account, come back, and **nothing changes** (or a "Google sign-in didn't finish" banner) | The app was served from somewhere other than Firebase Hosting (`*.web.app` / `*.firebaseapp.com`), so sign-in still hops between sites. Set `VITE_FIREBASE_AUTH_DOMAIN` to the domain you serve from, do step 7 for it, and deploy again. On Firebase Hosting this is automatic. |
 | "Couldn't save…" / permission errors | Make sure the rules are deployed: `npx firebase-tools@15 deploy --only firestore:rules`. |
 | People see an old version | Close the app fully and reopen it. On a laptop, refresh with Ctrl+Shift+R. |
 | "Could not start a session" on first open | The very first launch needs internet (to create the account). After that it works offline. |
