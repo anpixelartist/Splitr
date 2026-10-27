@@ -12,9 +12,13 @@ export default defineConfig({
       devOptions: {
         enabled: false
       },
-      // Inter is only fetched by devices without SF Pro, so it isn't precached
-      // (iPhones would download it for nothing); cache it on first use instead
       workbox: {
+        // Google sign-in runs through Firebase's helper pages at /__/auth/* on
+        // this same site. If the service worker answers those with the app's
+        // index.html, the account picker returns and nothing happens.
+        navigateFallbackDenylist: [/^\/__\//],
+        // Inter is only fetched by devices without SF Pro, so it isn't precached
+        // (iPhones would download it for nothing); cache it on first use instead
         runtimeCaching: [{
           urlPattern: ({ request }) => request.destination === 'font',
           handler: 'CacheFirst',
