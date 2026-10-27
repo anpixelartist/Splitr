@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useGroup } from '../context/GroupContext';
 import { useAuth } from '../context/AuthContext';
-import { X, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
-import { splitEqually } from '../lib/settlement';
+import { X, CheckCircle2, AlertCircle, Loader2, Check, Minus, Plus } from 'lucide-react';
+import { defaultsFor, previewSplit, type SplitMethod } from '../lib/splitModes';
 import type { Expense } from '../types';
 import { DEFAULT_CURRENCY, currencyDigits, currencySymbol, formatMoney } from '../lib/money';
 
@@ -33,6 +33,13 @@ const initialSplit = (expense: Expense | undefined, users: { id: string }[], dig
   };
 };
 
+const METHODS: { id: SplitMethod; label: string; hint: string }[] = [
+  { id: 'equal', label: 'Equally', hint: 'Tap someone to leave them out.' },
+  { id: 'exact', label: 'Amounts', hint: 'Type what each person owes.' },
+  { id: 'percent', label: 'Percent', hint: 'Type each person\'s percentage. They must add up to 100%.' },
+  { id: 'shares', label: 'Shares', hint: 'Use parts: 2 for someone who had twice as much, 0 to leave them out.' },
+];
+
 export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, readOnly = false, settledBefore = false }) => {
   const { addExpense, updateExpense, currentGroup } = useGroup();
   const { user } = useAuth();
@@ -45,8 +52,10 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
   const [description, setDescription] = useState(expense?.description ?? '');
   const [amount, setAmount] = useState(expense ? expense.amount.toFixed(digits) : '');
   const [paidBy, setPaidBy] = useState(expense?.paidBy ?? user?.uid ?? '');
-  const [splitMethod, setSplitMethod] = useState<'equal' | 'exact'>(init.method);
+  const [splitMethod, setSplitMethod] = useState<SplitMethod>(init.method);
   const [exactSplits, setExactSplits] = useState<Record<string, string>>(init.exact);
+  const [percentSplits, setPercentSplits] = useState<Record<string, string>>({});
+  const [shareSplits, setShareSplits] = useState<Record<string, string>>({});
   // Track who was unticked (not who is ticked) so members who join while the
   // modal is open are included by default.
   const [excludedUsers, setExcludedUsers] = useState<Set<string>>(init.excluded);
@@ -54,6 +63,21 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // The split as it stands, worked out live so the footer can say what's left
+  const parsedTotal = parseFloat(amount);
+  const total = Number.isFinite(parsedTotal) && parsedTotal > 0 ? Math.round(parsedTotal * 100) / 100 : null;
+  const preview = useMemo(() => previewSplit(
+    splitMethod, total, users.map(u => u.id),
+    { excluded: excludedUsers, exact: exactSplits, percent: percentSplits, shares: shareSplits },
+    digits, n => formatMoney(n, currency),
+  ), [splitMethod, total, users, excludedUsers, exactSplits, percentSplits, shareSplits, digits, currency]);
+
+  const chooseMethod = (m: SplitMethod) => {
+    setSplitMethod(m);
+    setError(null);
+    if (m === 'shares' && Object.keys(shareSplits).length === 0) setShareSplits(defaultsFor('shares', users.map(u => u.id)));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,39 +101,11 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
       return;
     }
 
-    const splits: { userId: string; amount: number }[] = [];
-
-    if (splitMethod === 'equal') {
-      const active = users.map(u => u.id).filter(id => !excludedUsers.has(id));
-      if (active.length === 0) {
-        setError('Select at least one person to split with.');
-        return;
-      }
-      splits.push(...splitEqually(totalAmount, active, digits));
-    } else {
-      // Compare in whole cents to avoid floating-point drift
-      let sumCents = 0;
-      for (const uid of users.map(u => u.id)) {
-        const val = parseFloat(exactSplits[uid] || '0');
-        if (isNaN(val) || val < 0) {
-          setError('Amounts can\'t be negative.');
-          return;
-        }
-        const cents = Math.round(val * 100);
-        if (cents > 0) { splits.push({ userId: uid, amount: cents / 100 }); sumCents += cents; }
-      }
-      if (splits.length === 0) {
-        setError('Enter at least one amount.');
-        return;
-      }
-      const totalCents = Math.round(totalAmount * 100);
-      if (sumCents !== totalCents) {
-        setError(
-          `Amounts don't add up — off by ${formatMoney(Math.abs(sumCents - totalCents) / 100, currency)}. Total must equal ${formatMoney(totalAmount, currency)}.`,
-        );
-        return;
-      }
+    if (!preview.ok) {
+      setError(preview.error);
+      return;
     }
+    const splits = preview.splits;
 
     // ── Save ────────────────────────────────────────────────────────────────
     setSaving(true);
@@ -212,78 +208,130 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
             </div>
 
             <div className="border-t pt-4">
-              <div className="flex justify-between items-center mb-3">
-                <label className="block text-sm font-medium text-gray-700">Split Method</label>
-                <div className="flex bg-gray-100 rounded-lg p-1">
-                  {(['equal', 'exact'] as const).map(m => (
-                    <button
-                      key={m}
-                      type="button"
-                      disabled={saving || readOnly}
-                      className={`px-3 py-1 rounded-md text-sm font-medium capitalize transition-colors ${
-                        splitMethod === m ? 'bg-surface shadow-sm' : 'text-gray-500'
-                      }`}
-                      onClick={() => setSplitMethod(m)}
-                    >
-                      {m === 'equal' ? 'Equally' : 'Exact Amounts'}
-                    </button>
-                  ))}
-                </div>
+              <span className="block text-sm font-medium text-gray-700 mb-2" id="split-label">Split</span>
+              {/* One row of four short options: fits a 320px phone without wrapping */}
+              <div role="radiogroup" aria-labelledby="split-label" className="grid grid-cols-4 bg-gray-100 rounded-xl p-1 gap-1">
+                {METHODS.map(m => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={splitMethod === m.id}
+                    disabled={saving || readOnly}
+                    className={`py-2 rounded-lg text-sm font-medium transition-colors ${
+                      splitMethod === m.id ? 'bg-surface shadow-sm text-gray-900' : 'text-gray-500'
+                    }`}
+                    onClick={() => chooseMethod(m.id)}
+                  >
+                    {m.label}
+                  </button>
+                ))}
               </div>
+              {!readOnly && <p className="text-xs text-gray-500 mt-2 mb-3">{METHODS.find(m => m.id === splitMethod)!.hint}</p>}
 
-              {splitMethod === 'equal' ? (
-                <div className="space-y-2">
-                  <p className="text-xs text-gray-500 mb-2">Select who was involved:</p>
-                  {users.map(u => (
-                    <label key={u.id} className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
-                      <input
-                        type="checkbox"
-                        className="w-5 h-5 rounded text-blue-600 dark:text-blue-400 focus:ring-blue-500"
-                        checked={!excludedUsers.has(u.id)}
-                        onChange={e => {
-                          const checked = e.target.checked;
-                          setExcludedUsers(prev => {
-                            const next = new Set(prev);
-                            if (checked) next.delete(u.id); else next.add(u.id);
-                            return next;
-                          });
-                          setError(null);
-                        }}
-                        disabled={saving || readOnly}
-                      />
-                      <span className="font-medium text-gray-800">{u.id === user?.uid ? 'Me' : u.name}</span>
-                    </label>
-                  ))}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <p className="text-xs text-gray-500 mb-2">Enter exact amounts for each person:</p>
-                  {users.map(u => (
-                    <div key={u.id} className="flex items-center gap-3 p-2 border rounded-lg bg-gray-50">
-                      <span className="font-medium text-gray-800 flex-1 truncate">
-                        {u.id === user?.uid ? 'Me' : u.name}
-                      </span>
-                      <div className="relative w-32">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{symbol}</span>
+              <div className={`space-y-2 ${readOnly ? 'mt-3' : ''}`}>
+                {users.map(u => {
+                  const name = u.id === user?.uid ? 'Me' : u.name;
+                  const share = preview.amounts[u.id];
+                  const off = splitMethod === 'equal' ? excludedUsers.has(u.id)
+                    : splitMethod === 'shares' && shareSplits[u.id] !== undefined && Number(shareSplits[u.id] || 0) === 0;
+                  const row = `relative flex items-center gap-3 px-3 py-2 min-h-[52px] border rounded-xl ${off ? 'opacity-50' : ''}`;
+                  // Under the name: what this person ends up paying, when it isn't the input itself
+                  const label = (
+                    <span className="flex-1 min-w-0">
+                      <span className="block font-medium text-gray-800 truncate">{name}</span>
+                      {splitMethod !== 'exact' && (
+                        <span className="block text-xs text-gray-500 tabular-nums">
+                          {share !== undefined && total !== null ? formatMoney(share, currency) : off ? 'Not included' : '\u00a0'}
+                        </span>
+                      )}
+                    </span>
+                  );
+
+                  if (splitMethod === 'equal') {
+                    return (
+                      <label key={u.id} className={`${row} cursor-pointer hover:bg-gray-50`}>
+                        {label}
                         <input
-                          type="number"
-                          inputMode="decimal"
-                          step={step}
-                          min="0"
-                          className="w-full border-none shadow-sm rounded-md pl-7 pr-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
-                          placeholder="0.00"
-                          value={exactSplits[u.id] || ''}
+                          type="checkbox"
+                          className="sr-only peer"
+                          checked={!off}
                           onChange={e => {
-                            setExactSplits(prev => ({ ...prev, [u.id]: e.target.value }));
+                            const checked = e.target.checked;
+                            setExcludedUsers(prev => {
+                              const next = new Set(prev);
+                              if (checked) next.delete(u.id); else next.add(u.id);
+                              return next;
+                            });
                             setError(null);
                           }}
                           disabled={saving || readOnly}
                         />
+                        <span aria-hidden className={`w-6 h-6 rounded-full flex items-center justify-center border-2 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-500 ${
+                          off ? 'border-gray-300' : 'bg-blue-600 border-blue-600'
+                        }`}>
+                          {!off && <Check className="w-4 h-4 text-white" strokeWidth={3} />}
+                        </span>
+                      </label>
+                    );
+                  }
+
+                  if (splitMethod === 'shares') {
+                    const n = Number(shareSplits[u.id] || 0);
+                    const set = (v: number) => { setShareSplits(prev => ({ ...prev, [u.id]: String(Math.max(0, v)) })); setError(null); };
+                    return (
+                      <div key={u.id} className={row}>
+                        {label}
+                        <div className="flex items-center gap-1">
+                          <button type="button" className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center disabled:opacity-40"
+                            onClick={() => set(Math.ceil(n) - 1)} disabled={saving || readOnly || n <= 0} aria-label={`One share less for ${name}`}>
+                            <Minus className="w-4 h-4" />
+                          </button>
+                          <input
+                            type="number" inputMode="decimal" min="0" step="1"
+                            className="w-12 text-center bg-transparent outline-none font-semibold tabular-nums focus:ring-2 focus:ring-blue-500 rounded-md py-1"
+                            value={shareSplits[u.id] ?? ''}
+                            onChange={e => { setShareSplits(prev => ({ ...prev, [u.id]: e.target.value })); setError(null); }}
+                            disabled={saving || readOnly}
+                            aria-label={`Shares for ${name}`}
+                          />
+                          <button type="button" className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center disabled:opacity-40"
+                            onClick={() => set(Math.floor(n) + 1)} disabled={saving || readOnly} aria-label={`One share more for ${name}`}>
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  const percent = splitMethod === 'percent';
+                  const values = percent ? percentSplits : exactSplits;
+                  const setValues = percent ? setPercentSplits : setExactSplits;
+                  return (
+                    <div key={u.id} className={row}>
+                      {label}
+                      <div className={`relative ${percent ? 'w-24' : 'w-32'}`}>
+                        {!percent && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{symbol}</span>}
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          step={percent ? '0.01' : step}
+                          min="0"
+                          className={`w-full bg-gray-50 border border-gray-200 rounded-lg py-2 outline-none focus:ring-2 focus:ring-blue-500 tabular-nums ${
+                            percent ? 'pl-3 pr-7 text-right' : 'pl-7 pr-3'
+                          }`}
+                          placeholder={percent ? '0' : digits === 0 ? '0' : '0.00'}
+                          value={values[u.id] || ''}
+                          onChange={e => { setValues(prev => ({ ...prev, [u.id]: e.target.value })); setError(null); }}
+                          disabled={saving || readOnly}
+                          aria-label={percent ? `Percentage for ${name}` : `Amount for ${name}`}
+                        />
+                        {percent && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500">%</span>}
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                  );
+                })}
+              </div>
             </div>
           </form>
         </div>
@@ -295,6 +343,13 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
               Only the person who added this expense or an admin can change it.
             </p>
           ) : (
+          <>
+          {/* Always in view while scrolling a long list of people */}
+          <p className={`text-sm text-center mb-2 font-medium tabular-nums ${
+            preview.ok ? 'text-green-700 dark:text-green-400' : total === null ? 'text-gray-500' : 'text-amber-700 dark:text-amber-400'
+          }`} aria-live="polite">
+            {preview.status}
+          </p>
           <button
             type="submit"
             form="expense-form"
@@ -310,6 +365,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
               expense ? 'Save changes' : 'Save Expense'
             )}
           </button>
+          </>
           )}
         </div>
       </div>
