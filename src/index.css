@@ -44,6 +44,8 @@
   body {
     background-color: rgb(var(--page));
     color: rgb(var(--gray-900));
+    font-size: var(--text-base);
+    line-height: var(--leading-base);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     letter-spacing: -0.011em; /* SF / Inter read tighter at UI sizes */
@@ -58,6 +60,29 @@
   /* Browsers paint form fields their own grey in dark mode; use our surface */
   input, select, textarea {
     background-color: rgb(var(--surface));
+  }
+}
+
+/* ── Type scale ──────────────────────────────────────────────────────────── */
+/* Phones read at arm's length, so they get iOS's sizes (footnote 13, subhead
+   15, body 17); from 640px up, the desktop sizes. */
+
+:root {
+  --text-xs: 0.8125rem;  --leading-xs: 1.125rem;
+  --text-sm: 0.9375rem;  --leading-sm: 1.25rem;
+  --text-base: 1.0625rem; --leading-base: 1.375rem;
+}
+@media (min-width: 640px) {
+  :root {
+    --text-xs: 0.75rem;  --leading-xs: 1rem;
+    --text-sm: 0.875rem; --leading-sm: 1.25rem;
+    --text-base: 1rem;   --leading-base: 1.5rem;
+  }
+}
+/* iOS zooms into any field under 16px when it's tapped */
+@media (max-width: 639px) {
+  input.text-xs, input.text-sm, select.text-xs, select.text-sm, textarea.text-xs, textarea.text-sm {
+    font-size: 1rem;
   }
 }
 

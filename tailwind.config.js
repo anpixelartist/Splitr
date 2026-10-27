@@ -20,6 +20,12 @@ export default {
       fontFamily: {
         sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"', '"Inter Variable"', 'system-ui', 'Segoe UI', 'Roboto', 'sans-serif'],
       },
+      // Phone and desktop get different type scales (see --text-* in src/index.css)
+      fontSize: {
+        xs: ['var(--text-xs)', { lineHeight: 'var(--leading-xs)' }],
+        sm: ['var(--text-sm)', { lineHeight: 'var(--leading-sm)' }],
+        base: ['var(--text-base)', { lineHeight: 'var(--leading-base)' }],
+      },
       colors: {
         surface: v('surface'),
         gray: scale('gray', [50, 100, 200, 300, 400, 500, 600, 700, 800, 900]),
