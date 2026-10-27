@@ -78,3 +78,9 @@ export function formatDate(value: string | number, locale?: string, withYear = t
     ? { day: 'numeric', month: 'short', year: 'numeric' }
     : { day: 'numeric', month: 'short' });
 }
+
+/** A calendar day saved as "YYYY-MM-DD", shown like formatDate. Read as a local date, so it never shifts a day. */
+export function formatDay(day: string, locale?: string, withYear = true): string {
+  const [y, m, d] = day.split('-').map(Number);
+  return formatDate(new Date(y, m - 1, d).getTime(), locale, withYear);
+}

@@ -132,7 +132,7 @@ interface GroupContextType {
   unlinkClaim: (participantId: string) => Promise<void>;
   addExpense: (expense: Omit<Expense, 'id' | 'createdAt' | 'createdBy'>) => Promise<void>;
   /** The person who added it, or an admin. Keeps its date and position. */
-  updateExpense: (id: string, changes: Pick<Expense, 'description' | 'amount' | 'paidBy' | 'splits'>) => Promise<void>;
+  updateExpense: (id: string, changes: Pick<Expense, 'description' | 'amount' | 'paidBy' | 'splits' | 'date' | 'split'>) => Promise<void>;
   /** Hides it now and deletes it after DELETE_UNDO_MS unless undone. */
   deleteExpense: (id: string) => Promise<void>;
   undoDeleteExpense: (id: string) => void;
@@ -590,7 +590,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const updateExpense = async (
     id: string,
-    changes: Pick<Expense, 'description' | 'amount' | 'paidBy' | 'splits'>,
+    changes: Pick<Expense, 'description' | 'amount' | 'paidBy' | 'splits' | 'date' | 'split'>,
   ) => {
     if (!currentGroupId || !uid) return;
     const gid = currentGroupId;

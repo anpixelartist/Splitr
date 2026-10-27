@@ -284,6 +284,34 @@ describe('expenses', () => {
     await assertFails(edit('alice', 'e1', { amount: 30.005 }));
     await assertFails(edit('alice', 'e1', { junk: 'x' }));
   });
+
+  it('can carry the day it was spent and how it was split', async () => {
+    const add = (id: string, extra: Record<string, unknown>) =>
+      setDoc(doc(as('bob'), 'groups', GID, 'expenses', id), { ...expense(id, 'bob'), ...extra });
+    await assertSucceeds(add('d1', { date: '2026-10-27' }));
+    await assertSucceeds(add('d2', { split: { method: 'shares', values: { alice: 1, bob: 1 } } }));
+    await assertSucceeds(add('d3', {
+      date: '2026-10-01',
+      split: { method: 'items', items: [{ name: 'Pizza', amount: 30, people: ['alice', 'bob'] }] },
+    }));
+    // Older-style expenses without them still work (the AI connector writes these)
+    await assertSucceeds(add('d4', {}));
+
+    await assertFails(add('x5', { date: '27/10/2026' }));
+    await assertFails(add('x6', { date: 20261027 }));
+    await assertFails(add('x7', { split: { method: 'magic' } }));
+    await assertFails(add('x8', { split: { method: 'shares', values: { alice: 1 }, junk: 'x' } }));
+    await assertFails(add('x9', { split: 'shares' }));
+    await assertFails(add('x10', { split: { method: 'percent', values: Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`u${i}`, 1])) } }));
+    await assertFails(add('x11', { split: { method: 'items', items: 'pizza' } }));
+  });
+
+  it('lets an edit add or change the date and split, with the same checks', async () => {
+    await assertSucceeds(edit('alice', 'e1', { date: '2026-09-30', split: { method: 'percent', values: { alice: 50, bob: 50 } } }));
+    await assertSucceeds(edit('alice', 'e1', { split: { method: 'exact' } }));
+    await assertFails(edit('alice', 'e1', { date: 'yesterday' }));
+    await assertFails(edit('alice', 'e1', { split: { method: 'equal', extra: true } }));
+  });
 });
 
 describe('settlements', () => {

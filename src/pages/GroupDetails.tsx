@@ -8,7 +8,7 @@ import { AddExpenseModal } from '../components/AddExpenseModal';
 import { SettleModal } from '../components/SettleModal';
 import { BalanceCard } from '../components/BalanceCard';
 import { useToast } from '../context/ToastContext';
-import { DEFAULT_CURRENCY, formatMoney, formatDate } from '../lib/money';
+import { DEFAULT_CURRENCY, formatMoney, formatDate, formatDay } from '../lib/money';
 import { unclaimedParticipants, claimedBy } from '../lib/claims';
 import { effectiveStatus, allowedActions, countsTowardBalances } from '../lib/payments';
 import type { Expense, PaymentStatus, SettlementRecord } from '../types';
@@ -495,7 +495,7 @@ export const GroupDetails: React.FC = () => {
                     </div>
                     <div className="text-sm text-gray-500 flex justify-between items-center">
                       <span>Paid by {expense.paidBy === user?.uid ? 'you' : getUserName(expense.paidBy)}</span>
-                      <span>{formatDate(expense.createdAt)}</span>
+                      <span>{expense.date ? formatDay(expense.date) : formatDate(expense.createdAt)}</span>
                     </div>
                     {expense.createdBy && expense.createdBy !== expense.paidBy && (
                       <p className="text-xs text-gray-400 mt-0.5">

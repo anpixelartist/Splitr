@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatMoney, currencyDigits, defaultCurrency, currencySymbol, formatDate } from './money';
+import { formatMoney, currencyDigits, defaultCurrency, currencySymbol, formatDate, formatDay } from './money';
 import { splitEqually, validateExpense } from './settlement';
 
 describe('money formatting', () => {
@@ -43,5 +43,13 @@ describe('whole-unit currencies', () => {
     const e = { amount: 100.5, paidBy: 'a', splits: [{ userId: 'a', amount: 100.5 }] };
     expect(validateExpense(e, ['a'], 0)).not.toBeNull();
     expect(validateExpense({ ...e, amount: 100, splits: [{ userId: 'a', amount: 100 }] }, ['a'], 0)).toBeNull();
+  });
+});
+
+describe('formatDay', () => {
+  it('shows a saved day as that same day in every time zone', () => {
+    // Parsed as a local date: "2026-10-01" must never become 30 Sep west of UTC
+    expect(formatDay('2026-10-01', 'en-GB')).toBe('1 Oct 2026');
+    expect(formatDay('2026-12-31', 'en-GB', false)).toBe('31 Dec');
   });
 });

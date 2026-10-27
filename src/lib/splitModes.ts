@@ -1,19 +1,33 @@
-// The ways an expense can be split: equally, by exact amounts, by percentages
-// or by shares ("parts"). Every method ends up as the same stored data, a
-// list of exact amounts per person, so balances, firestore.rules and
-// validateExpense don't need to know which method was used.
+// The ways an expense can be split: equally, by exact amounts, by
+// percentages, by shares ("parts"), equally with adjustments, or item by item
+// from a bill. Every method ends up as the same list of exact amounts per
+// person, which is all balances and validateExpense look at. How it was
+// entered is kept alongside (SplitRecord) only so it reopens the same way.
 
+import type { SplitMethod, SplitRecord } from '../types';
 import { splitEqually } from './settlement';
 
-export type SplitMethod = 'equal' | 'exact' | 'percent' | 'shares';
+export type { SplitMethod, SplitRecord };
+
+/** One line of a bill in an item-by-item split, as typed. */
+export interface ItemInput {
+  key: string;      // stable id for the form row
+  name: string;
+  amount: string;
+  people: string[]; // who had it; they share it equally
+}
+
 
 export interface SplitInput {
-  /** Equal: people left out (tracked this way so new members are in by default) */
+  /** Equal and adjust: people left out (tracked this way so new members are in by default) */
   excluded: Set<string>;
   /** Text typed per person, by method */
   exact: Record<string, string>;
   percent: Record<string, string>;
   shares: Record<string, string>;
+  /** Adjust: + or − on top of an equal share */
+  adjust: Record<string, string>;
+  items: ItemInput[];
 }
 
 export interface SplitPreview {
@@ -42,19 +56,30 @@ export function splitByWeights(
   digits = 2,
 ): { userId: string; amount: number }[] {
   const scale = 10 ** digits;
-  const units = Math.round(total * scale);
-  const w = weights.map(x => ({ userId: x.userId, w: Math.round(x.weight * 100) })).filter(x => x.w > 0);
-  const sum = w.reduce((s, x) => s + x.w, 0);
-  if (sum === 0) return [];
-  // Integer arithmetic throughout: units × weight stays far below 2^53
-  const parts = w.map((x, i) => ({ ...x, i, base: Math.floor((units * x.w) / sum), rem: (units * x.w) % sum }));
-  let left = units - parts.reduce((s, p) => s + p.base, 0);
-  for (const p of [...parts].sort((a, b) => b.rem - a.rem || a.i - b.i)) {
+  const parts = allocate(Math.round(total * scale), weights.map(x => ({ userId: x.userId, w: Math.round(x.weight * 100) })));
+  return parts.map(p => ({ userId: p.userId, amount: p.units / scale }));
+}
+
+/**
+ * Shares `units` (whole smallest-currency units) in proportion to integer
+ * weights, largest remainder first, ties to whoever comes first. BigInt keeps
+ * units × weight exact whatever the sizes.
+ */
+function allocate(units: number, weights: { userId: string; w: number }[]): { userId: string; units: number }[] {
+  const w = weights.filter(x => x.w > 0);
+  const sum = BigInt(w.reduce((s, x) => s + x.w, 0));
+  if (sum === 0n) return [];
+  const parts = w.map((x, i) => {
+    const product = BigInt(units) * BigInt(x.w);
+    return { userId: x.userId, i, units: Number(product / sum), rem: product % sum };
+  });
+  let left = units - parts.reduce((s, p) => s + p.units, 0);
+  for (const p of [...parts].sort((a, b) => (a.rem === b.rem ? a.i - b.i : a.rem > b.rem ? -1 : 1))) {
     if (left === 0) break;
-    p.base += 1;
+    p.units += 1;
     left -= 1;
   }
-  return parts.map(p => ({ userId: p.userId, amount: p.base / scale }));
+  return parts.map(({ userId, units: u }) => ({ userId, units: u }));
 }
 
 /** A typed number: empty counts as 0, anything unreadable or negative is NaN. */
@@ -63,6 +88,14 @@ const parse = (s: string | undefined): number => {
   if (t === '') return 0;
   const n = Number(t);
   return Number.isFinite(n) && n >= 0 ? n : NaN;
+};
+
+/** Like parse, but a leading + or − is allowed (adjustments). */
+const parseSigned = (s: string | undefined): number => {
+  const t = (s ?? '').trim().replace(/^\+/, '').replace(/^[−–]/, '-');
+  if (t === '' || t === '-') return 0;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : NaN;
 };
 
 const hasAtMost = (n: number, decimals: number) =>
@@ -119,6 +152,60 @@ export function previewSplit(
     return ready(ids.filter(id => amounts[id]).map(id => ({ userId: id, amount: amounts[id] })), 'Adds up to the total ✓');
   }
 
+  if (method === 'adjust') {
+    const active = ids.filter(id => !input.excluded.has(id));
+    if (active.length === 0) return fail({}, 'Pick at least one person', 'Select at least one person to split with.');
+    const extra: Record<string, number> = {};
+    let extras = 0;
+    for (const id of active) {
+      const n = parseSigned(input.adjust[id]);
+      if (Number.isNaN(n) || !hasAtMost(n, digits)) {
+        return fail({}, 'Check the adjustments', digits === 0 ? 'Adjustments must be whole amounts.' : 'Adjustments can only have whole cents.');
+      }
+      extra[id] = Math.round(n * scale);
+      extras += extra[id];
+    }
+    if (total === null) return fail({}, 'Equal shares, plus or minus extras', 'Enter the total first.');
+    const rest = Math.round(total * scale) - extras;
+    if (rest < 0) return fail({}, 'Extras are more than the total', `The extras add up to more than ${money(total)}.`);
+    const units = splitEqually(rest / scale, active, digits).map(s => ({ userId: s.userId, u: Math.round(s.amount * scale) + extra[s.userId] }));
+    const amounts = Object.fromEntries(units.map(x => [x.userId, x.u / scale]));
+    if (units.some(x => x.u < 0)) return fail(amounts, 'A share is below zero', 'Someone\'s share would be below zero. Make the minus smaller.');
+    const status = extras === 0
+      ? `Split equally between ${active.length === 1 ? '1 person' : `${active.length} people`}`
+      : `${money(rest / scale)} split equally, plus extras`;
+    return ready(units.filter(x => x.u > 0).map(x => ({ userId: x.userId, amount: x.u / scale })), status);
+  }
+
+  if (method === 'items') {
+    const per = new Map<string, number>(ids.map(id => [id, 0])); // units per person from the items
+    let itemsTotal = 0;
+    for (const [n, item] of input.items.entries()) {
+      const label = item.name.trim() || `item ${n + 1}`;
+      const a = parse(item.amount);
+      if (Number.isNaN(a) || !hasAtMost(a, digits)) {
+        return fail({}, 'Check the item prices', `The price of ${label} isn't a valid amount.`);
+      }
+      if (a === 0) continue; // a blank row
+      const people = item.people.filter(id => per.has(id));
+      if (people.length === 0) return fail({}, `Who had ${label}?`, `Choose who had ${label}.`);
+      for (const s of splitEqually(a, people, digits)) per.set(s.userId, per.get(s.userId)! + Math.round(s.amount * scale));
+      itemsTotal += Math.round(a * scale);
+    }
+    if (itemsTotal === 0) return fail({}, 'Add the items from the bill', 'Add at least one item with a price.');
+    const fromItems = Object.fromEntries([...per].filter(([, u]) => u > 0).map(([id, u]) => [id, u / scale]));
+    if (total === null) return fail(fromItems, `Items add up to ${money(itemsTotal / scale)}`, 'Enter the total first.');
+    const extra = Math.round(total * scale) - itemsTotal;
+    if (extra < 0) {
+      return fail(fromItems, `Items are ${money(-extra / scale)} over the total`,
+        `The items add up to ${money(itemsTotal / scale)}, more than the total.`);
+    }
+    // Tax, tip and anything not itemised: shared in proportion to what each person had
+    for (const x of allocate(extra, [...per].map(([userId, w]) => ({ userId, w })))) per.set(x.userId, per.get(x.userId)! + x.units);
+    const splits = ids.filter(id => per.get(id)! > 0).map(id => ({ userId: id, amount: per.get(id)! / scale }));
+    return ready(splits, extra === 0 ? 'Items add up to the total ✓' : `${money(extra / scale)} tax/tip shared by what each had`);
+  }
+
   // Percentages and shares: weights, turned into amounts by splitByWeights
   const isPercent = method === 'percent';
   const typed = isPercent ? input.percent : input.shares;
@@ -152,6 +239,79 @@ export function previewSplit(
   const label = `${count} ${sum === 100 ? 'share' : 'shares'}`;
   if (total === null) return fail(amounts, label, 'Enter the total first.');
   return ready(splitByWeights(total, weights, digits), `${label} · ${money(total * 100 / sum)} per share`);
+}
+
+export const emptySplitInput = (): SplitInput =>
+  ({ excluded: new Set(), exact: {}, percent: {}, shares: {}, adjust: {}, items: [] });
+
+let itemKeys = 0;
+export const newItem = (): ItemInput => ({ key: `item-${++itemKeys}`, name: '', amount: '', people: [] });
+
+/** What to save about how the split was entered. */
+export function toSplitRecord(method: SplitMethod, input: SplitInput, ids: string[]): SplitRecord {
+  const numbers = (typed: Record<string, string>, keep: (id: string, n: number) => boolean, signed = false) => {
+    const out: Record<string, number> = {};
+    for (const id of ids) {
+      const n = (signed ? parseSigned : parse)(typed[id]);
+      if (Number.isFinite(n) && keep(id, n)) out[id] = n;
+    }
+    return out;
+  };
+  switch (method) {
+    case 'percent': return { method, values: numbers(input.percent, (_, n) => n > 0) };
+    case 'shares': return { method, values: numbers(input.shares, (_, n) => n > 0) };
+    case 'adjust': return { method, values: numbers(input.adjust, id => !input.excluded.has(id), true) };
+    case 'items': return {
+      method,
+      items: input.items
+        .map(i => ({ name: i.name.trim(), amount: parse(i.amount), people: i.people.filter(id => ids.includes(id)) }))
+        .filter(i => i.amount > 0),
+    };
+    default: return { method };
+  }
+}
+
+/**
+ * How to show a saved expense in the form: the way it was entered, when that
+ * still gives exactly the saved amounts; otherwise equally (shares equal to
+ * the cent) or as exact amounts. `resolve` maps ids saved before a
+ * placeholder was claimed to whoever claimed it.
+ */
+export function restoreSplit(
+  expense: { amount: number; splits: { userId: string; amount: number }[]; split?: SplitRecord },
+  ids: string[],
+  digits: number,
+  resolve: (id: string) => string = id => id,
+): { method: SplitMethod; input: SplitInput } {
+  // Merged per person: a claimed placeholder can make one person appear twice
+  const shares = new Map<string, number>();
+  for (const s of expense.splits) shares.set(s.userId, Math.round(((shares.get(s.userId) ?? 0) + s.amount) * 100) / 100);
+  const base = emptySplitInput();
+  base.exact = Object.fromEntries([...shares].map(([id, a]) => [id, a.toFixed(digits)]));
+  base.excluded = new Set(ids.filter(id => !shares.has(id)));
+
+  const r = expense.split;
+  if (r) {
+    const input: SplitInput = { ...base, excluded: new Set(base.excluded) };
+    const values = Object.fromEntries(Object.entries(r.values ?? {}).map(([id, n]) => [resolve(id), n]));
+    if (r.method === 'percent' || r.method === 'shares') {
+      input[r.method] = Object.fromEntries(Object.entries(values).map(([id, n]) => [id, String(n)]));
+    } else if (r.method === 'adjust') {
+      input.adjust = Object.fromEntries(Object.entries(values).filter(([, n]) => n !== 0).map(([id, n]) => [id, n > 0 ? `+${n}` : String(n)]));
+      input.excluded = new Set(ids.filter(id => !(id in values)));
+    } else if (r.method === 'items') {
+      input.items = (r.items ?? []).map(i => ({ ...newItem(), name: i.name, amount: String(i.amount), people: i.people.map(resolve) }));
+    }
+    // Only trusted when it reproduces exactly what was saved
+    const again = previewSplit(r.method, expense.amount, ids, input, digits, String);
+    const same = again.ok && again.splits.length === shares.size
+      && again.splits.every(s => Math.round(s.amount * 100) === Math.round((shares.get(s.userId) ?? NaN) * 100));
+    if (same) return { method: r.method, input };
+  }
+
+  const cents = [...shares.values()].map(a => Math.round(a * 100));
+  const equal = cents.length > 0 && Math.max(...cents) - Math.min(...cents) <= 1;
+  return { method: equal ? 'equal' : 'exact', input: base };
 }
 
 /** Starting values when someone switches to a method. */

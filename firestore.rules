@@ -101,7 +101,19 @@ service cloud.firestore {
         && validName(d.paidBy, 128)
         && d.splits is list
         && d.splits.size() > 0
-        && d.splits.size() <= 100;
+        && d.splits.size() <= 100
+        && (!('date' in d) || (d.date is string && d.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')))
+        && (!('split' in d) || validSplitRecord(d.split));
+    }
+
+    // How the split was entered (percent, shares, items…), kept only so the
+    // expense reopens the same way. Balances use `splits`, never this.
+    function validSplitRecord(r) {
+      return r is map
+        && r.keys().hasOnly(['method', 'values', 'items'])
+        && r.method in ['equal', 'exact', 'percent', 'shares', 'adjust', 'items']
+        && (!('values' in r) || (r.values is map && r.values.size() <= 100))
+        && (!('items' in r) || (r.items is list && r.items.size() <= 100));
     }
 
     function validName(s, max) {
@@ -190,7 +202,9 @@ service cloud.firestore {
         allow read: if isMemberOf(groupAt(gid));
 
         allow create: if isMemberOf(groupAt(gid))
-          && hasExactly(['id', 'groupId', 'description', 'amount', 'paidBy', 'splits', 'createdBy', 'createdAt'])
+          && request.resource.data.keys().hasAll(['id', 'groupId', 'description', 'amount', 'paidBy', 'splits', 'createdBy', 'createdAt'])
+          && request.resource.data.keys().hasOnly(
+               ['id', 'groupId', 'description', 'amount', 'paidBy', 'splits', 'createdBy', 'createdAt', 'date', 'split'])
           && request.resource.data.id == expenseId
           && request.resource.data.groupId == gid
           && request.resource.data.createdBy == request.auth.uid
@@ -202,7 +216,7 @@ service cloud.firestore {
         allow update: if isMemberOf(groupAt(gid))
           && (resource.data.get('createdBy', '') == request.auth.uid || isAdminOf(groupAt(gid)))
           && request.resource.data.keys().hasOnly(
-               ['id', 'groupId', 'description', 'amount', 'paidBy', 'splits', 'createdBy', 'createdAt', 'editedBy', 'editedAt'])
+               ['id', 'groupId', 'description', 'amount', 'paidBy', 'splits', 'createdBy', 'createdAt', 'editedBy', 'editedAt', 'date', 'split'])
           && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['id', 'groupId', 'createdBy', 'createdAt'])
           && request.resource.data.editedBy == request.auth.uid
           && request.resource.data.editedAt == request.time

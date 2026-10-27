@@ -37,6 +37,18 @@ export type Expense = {
   createdAt: string;
   editedBy?: string;    // who last edited it
   editedAt?: number;    // ms, server time
+  date?: string;        // the day it was spent, YYYY-MM-DD (older expenses: use createdAt)
+  split?: SplitRecord;  // how the split was entered, so it reopens the same way
+};
+
+export type SplitMethod = 'equal' | 'exact' | 'percent' | 'shares' | 'adjust' | 'items';
+
+/** How an expense's split was entered. Balances use only `splits`. */
+export type SplitRecord = {
+  method: SplitMethod;
+  /** percent, shares: each person's number; adjust: everyone included, with their + or − */
+  values?: Record<string, number>;
+  items?: { name: string; amount: number; people: string[] }[];
 };
 
 export type Balance = {
