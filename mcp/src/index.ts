@@ -43,7 +43,7 @@ function providerFor(origin: string): OAuthProvider<Env> {
         fetch: (request, env) => {
           const { pathname } = new URL(request.url);
           if (pathname === '/authorize') return handleAuthorize(request as Request, env);
-          if (pathname === '/') return new Response('Splitr MCP connector. Add <origin>/mcp as a custom connector in your assistant.\n'.replace('<origin>', origin), { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+          if (pathname === '/' && request.method === 'GET') return new Response('Splitr MCP connector. Add <origin>/mcp as a custom connector in your assistant.\n'.replace('<origin>', origin), { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
           return new Response('Not found', { status: 404 });
         },
       },
