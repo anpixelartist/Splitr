@@ -2,10 +2,22 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useGroup } from '../context/GroupContext';
-import { Wallet, Users, PlusCircle, UserPlus, HardDrive, AlertTriangle, X } from 'lucide-react';
+import { Wallet, Users, Plus, ChevronRight, HardDrive, AlertTriangle, X } from 'lucide-react';
 import { CreateGroupModal } from '../components/CreateGroupModal';
 import { ProfileModal } from '../components/ProfileModal';
+import { JoinCodeInput } from '../components/JoinCodeInput';
 import { useToast } from '../context/ToastContext';
+import { DEFAULT_CURRENCY } from '../lib/money';
+import type { Group } from '../types';
+
+// Apple's system colours, picked per group so each one keeps its own icon colour
+const GROUP_TINTS = ['bg-[#0A84FF]', 'bg-[#30B0C7]', 'bg-[#34C759]', 'bg-[#FF9F0A]', 'bg-[#FF375F]', 'bg-[#BF5AF2]', 'bg-[#5E5CE6]'];
+const tintFor = (id: string) => GROUP_TINTS[[...id].reduce((h, c) => h + c.charCodeAt(0), 0) % GROUP_TINTS.length];
+
+const memberNamesOf = (group: Group) => [
+  ...group.members.map(uid => group.memberNames?.[uid] ?? '?'),
+  ...(group.participants ?? []).map(p => p.name),
+];
 
 export const Home: React.FC = () => {
   const { userName, contacts, addContact, isLocalOnly, authError, clearAuthError } = useAuth();
@@ -33,9 +45,8 @@ export const Home: React.FC = () => {
 
   // Joining goes through the group's invite screen, which asks "Which of
   // these is you?" when the group has name-only members.
-  const handleJoinGroup = (e: React.FormEvent) => {
-    e.preventDefault();
-    const code = joinCode.trim().toUpperCase();
+  const joinWithCode = (raw: string) => {
+    const code = raw.trim().toUpperCase();
     if (!code) return;
     if (isLocalOnly) {
       showToast('Joining groups needs the online version of Splitr.', 'error');
@@ -45,17 +56,21 @@ export const Home: React.FC = () => {
     navigate(`/group/${code}`);
   };
 
-  const totalMembers = (group: { members: string[]; participants?: { id: string; name: string }[] }) =>
-    group.members.length + (group.participants?.length ?? 0);
+  const handleJoinGroup = (e: React.FormEvent) => {
+    e.preventDefault();
+    joinWithCode(joinCode);
+  };
 
   return (
     <div className="max-w-md md:max-w-2xl lg:max-w-5xl mx-auto p-4 lg:px-8 space-y-8">
 
       {/* ── Header ── */}
       <header className="flex items-center justify-between py-4">
-        <div className="flex items-center gap-2">
-          <Wallet className="w-8 h-8 text-blue-600 dark:text-blue-400" />
-          <h1 className="text-2xl font-bold text-gray-900">Splitr</h1>
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-[0.6rem] bg-gradient-to-b from-[#2E8BFF] to-blue-600 flex items-center justify-center shadow-sm shadow-blue-600/30">
+            <Wallet className="w-5 h-5 text-white" />
+          </div>
+          <h1 className="text-[1.75rem] font-bold tracking-tight text-gray-900">Splitr</h1>
         </div>
 
         {/* Avatar — opens Profile modal */}
@@ -65,7 +80,7 @@ export const Home: React.FC = () => {
           title="Profile & contacts"
           aria-label="Profile & contacts"
         >
-          <div className="w-9 h-9 bg-blue-100 text-blue-700 dark:text-blue-300 rounded-full flex items-center justify-center font-bold text-sm select-none">
+          <div className="w-9 h-9 bg-gradient-to-b from-gray-300 to-gray-400 text-white rounded-full flex items-center justify-center font-semibold text-sm select-none">
             {userName.charAt(0).toUpperCase()}
           </div>
           <span className="text-sm font-medium text-gray-700 hidden sm:block">{userName}</span>
@@ -92,72 +107,83 @@ export const Home: React.FC = () => {
       )}
 
       {/* ── Actions ── */}
-      <section className="space-y-4">
-        <div className="bg-surface p-6 rounded-xl shadow-sm border">
-          <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
-            <PlusCircle className="w-5 h-5 text-blue-500" />
-            Create a New Group
-          </h2>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="w-full bg-blue-600 text-white py-2.5 rounded-xl font-medium hover:bg-blue-700 transition-colors"
-          >
-            New Group…
-          </button>
+      <section className="bg-surface rounded-3xl p-5 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_12px_32px_-16px_rgb(0_0_0/0.18)]">
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="w-full bg-blue-600 text-white py-3 rounded-full font-semibold hover:bg-blue-700 transition-transform active:scale-[0.98] flex items-center justify-center gap-2"
+        >
+          <Plus className="w-5 h-5" strokeWidth={2.5} />
+          New Group
+        </button>
+
+        <div className="flex items-center gap-3 my-5">
+          <div className="flex-1 h-px bg-gray-200" />
+          <span className="text-xs font-medium text-gray-400 shrink-0">or join with a code</span>
+          <div className="flex-1 h-px bg-gray-200" />
         </div>
 
-        <div className="bg-surface p-6 rounded-xl shadow-sm border">
-          <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
-            <UserPlus className="w-5 h-5 text-green-500" />
-            Join a Group
-          </h2>
-          <form onSubmit={handleJoinGroup} className="flex gap-2">
-            <input
-              type="text"
-              placeholder="Enter Group Code"
-              aria-label="Group code"
-              autoCapitalize="characters"
-              autoComplete="off"
-              className="flex-1 min-w-0 border rounded-xl px-4 py-2.5 uppercase focus:ring-2 focus:ring-green-500 outline-none tracking-widest"
-              value={joinCode}
-              onChange={e => setJoinCode(e.target.value)}
-            />
-            <button
-              type="submit"
-              disabled={!joinCode.trim()}
-              className="shrink-0 bg-green-600 text-white px-4 py-2.5 rounded-xl font-medium hover:bg-green-700 transition-colors disabled:opacity-60 flex items-center gap-1.5"
-            >
-              Join
-            </button>
-          </form>
-        </div>
+        {/* A full code opens the group's invite screen right away; Join is for shorter old codes */}
+        <form onSubmit={handleJoinGroup} className="space-y-3">
+          <JoinCodeInput value={joinCode} onChange={setJoinCode} onComplete={joinWithCode} />
+          <button
+            type="submit"
+            disabled={joinCode.length < 4}
+            className="w-full py-3 rounded-full font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 hover:bg-blue-100 transition-colors disabled:opacity-50"
+          >
+            Join Group
+          </button>
+        </form>
       </section>
 
-      {/* ── Groups list ── */}
+      {/* ── Groups list: an iOS inset-grouped list ── */}
       <section>
-        <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-          <Users className="w-6 h-6 text-gray-700" />
-          Your Groups
-        </h2>
+        <h2 className="text-[1.375rem] font-bold tracking-tight mb-3 px-1">Your Groups</h2>
         {groups.length === 0 ? (
-          <p className="text-gray-500 text-center py-8">You aren't in any groups yet.</p>
+          <div className="bg-surface rounded-3xl py-12 px-6 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-3">
+              <Users className="w-7 h-7 text-gray-400" />
+            </div>
+            <p className="font-semibold text-gray-900">No groups yet</p>
+            <p className="text-sm text-gray-500 mt-1">Create one for a trip, a flat or dinner, or join with a code.</p>
+          </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {groups.map(group => (
-              <button
-                key={group.id}
-                onClick={() => navigate(`/group/${group.id}`)}
-                className="w-full text-left bg-surface p-4 rounded-xl border shadow-sm flex justify-between items-center cursor-pointer hover:border-blue-300 transition-colors"
-              >
-                <div>
-                  <h3 className="font-semibold text-lg">{group.name}</h3>
-                  <p className="text-sm text-gray-500">{totalMembers(group)} members</p>
-                </div>
-                <div className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600 font-mono">
-                  {group.id}
-                </div>
-              </button>
-            ))}
+          <div className="bg-surface rounded-3xl overflow-hidden">
+            {groups.map(group => {
+              const names = memberNamesOf(group);
+              return (
+                <button
+                  key={group.id}
+                  onClick={() => navigate(`/group/${group.id}`)}
+                  className="group w-full text-left flex items-center gap-3 pl-4 hover:bg-gray-50 active:bg-gray-100 transition-colors"
+                >
+                  <div className={`w-10 h-10 rounded-xl ${tintFor(group.id)} flex items-center justify-center text-white font-semibold shrink-0`}>
+                    {group.name.charAt(0).toUpperCase()}
+                  </div>
+                  {/* Hairline separators start after the icon, as in iOS lists */}
+                  <div className="flex-1 min-w-0 flex items-center gap-3 py-3 pr-3 border-b border-gray-200/70 group-last:border-b-0">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-gray-900 truncate">{group.name}</h3>
+                      <p className="text-sm text-gray-500">
+                        {names.length} {names.length === 1 ? 'member' : 'members'} · {group.currency ?? DEFAULT_CURRENCY}
+                      </p>
+                    </div>
+                    <div className="flex -space-x-2 shrink-0" aria-hidden="true">
+                      {names.slice(0, 3).map((n, i) => (
+                        <div key={i} className="w-7 h-7 rounded-full bg-gray-100 ring-2 ring-surface flex items-center justify-center text-[0.6875rem] font-semibold text-gray-600">
+                          {n.charAt(0).toUpperCase()}
+                        </div>
+                      ))}
+                      {names.length > 3 && (
+                        <div className="w-7 h-7 rounded-full bg-gray-200 ring-2 ring-surface flex items-center justify-center text-[0.6875rem] font-semibold text-gray-600">
+                          +{names.length - 3}
+                        </div>
+                      )}
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
+                  </div>
+                </button>
+              );
+            })}
           </div>
         )}
       </section>

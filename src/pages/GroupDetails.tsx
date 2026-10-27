@@ -6,6 +6,7 @@ import { ArrowLeft, Receipt, Share2, Plus, Crown, Trash2, CheckCircle2, MoreVert
 import { calculateBalances, calculateSettlements, isSettled } from '../lib/settlement';
 import { AddExpenseModal } from '../components/AddExpenseModal';
 import { SettleModal } from '../components/SettleModal';
+import { BalanceCard } from '../components/BalanceCard';
 import { useToast } from '../context/ToastContext';
 import { DEFAULT_CURRENCY, formatMoney, formatDate } from '../lib/money';
 import { unclaimedParticipants, claimedBy } from '../lib/claims';
@@ -83,6 +84,10 @@ export const GroupDetails: React.FC = () => {
     [expenses, confirmedPayments],
   );
   const settlementPlan = useMemo(() => calculateSettlements(balances), [balances]);
+  const { groupSpend, yourShare } = useMemo(() => ({
+    groupSpend: expenses.reduce((sum, e) => sum + e.amount, 0),
+    yourShare: expenses.reduce((sum, e) => sum + (e.splits.find(s => s.userId === user?.uid)?.amount ?? 0), 0),
+  }), [expenses, user?.uid]);
 
   // The timestamp of the most-recent settlement record (ISO string, lexicographically comparable)
   const lastSettledAt = useMemo(
@@ -319,7 +324,7 @@ export const GroupDetails: React.FC = () => {
 
   return (
     <div className="max-w-md md:max-w-2xl lg:max-w-5xl mx-auto min-h-screen bg-gray-50 flex flex-col relative">
-      <header className="bg-surface border-b sticky top-0 z-10">
+      <header className="glass border-b border-gray-200/70 sticky top-0 z-10">
         <div className="p-4 flex items-center justify-between">
           <button onClick={() => navigate('/')} className="p-2 -ml-2 rounded-full hover:bg-gray-100" aria-label="Back">
             <ArrowLeft className="w-6 h-6 text-gray-700" />
@@ -344,18 +349,29 @@ export const GroupDetails: React.FC = () => {
             </button>
           </div>
         </div>
-        <div className="flex border-t lg:hidden">
-          {(['expenses', 'balances'] as const).map(tab => (
-            <button
-              key={tab}
-              className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors capitalize ${
-                activeTab === tab ? 'border-blue-600 text-blue-600 dark:text-blue-400' : 'border-transparent text-gray-500'
+        {/* iOS-style segmented control: the white thumb slides under the active tab */}
+        <div className="px-4 pb-3 lg:hidden">
+          <div role="tablist" className="relative grid grid-cols-2 rounded-[0.6rem] bg-gray-200/70 p-0.5">
+            <div
+              aria-hidden="true"
+              className={`absolute inset-y-0.5 left-0.5 w-[calc(50%-0.125rem)] rounded-[0.5rem] bg-surface shadow-[0_1px_3px_rgb(0_0_0/0.12)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+                activeTab === 'balances' ? 'translate-x-full' : ''
               }`}
-              onClick={() => setActiveTab(tab)}
-            >
-              {tab}
-            </button>
-          ))}
+            />
+            {(['expenses', 'balances'] as const).map(tab => (
+              <button
+                key={tab}
+                role="tab"
+                aria-selected={activeTab === tab}
+                className={`relative py-1.5 text-[0.8125rem] font-semibold capitalize transition-colors ${
+                  activeTab === tab ? 'text-gray-900' : 'text-gray-500'
+                }`}
+                onClick={() => setActiveTab(tab)}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
@@ -508,19 +524,12 @@ export const GroupDetails: React.FC = () => {
             {/* Your Balance */}
             <section>
               <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Your Balance</h3>
-              {(() => {
-                const myBalance = balances[user?.uid || '']?.netBalance || 0;
-                return (
-                  <div className={`p-4 rounded-xl border ${myBalance > 0 ? 'bg-green-50 border-green-200' : myBalance < 0 ? 'bg-red-50 border-red-200' : 'bg-gray-100 border-gray-200'}`}>
-                    <p className="text-sm text-gray-600 mb-1">
-                      {myBalance > 0 ? 'You are owed' : myBalance < 0 ? 'You owe' : 'You are settled up'}
-                    </p>
-                    <p className={`text-3xl font-bold ${myBalance > 0 ? 'text-green-700 dark:text-green-300' : myBalance < 0 ? 'text-red-700 dark:text-red-300' : 'text-gray-700'}`}>
-                      {money(Math.abs(myBalance))}
-                    </p>
-                  </div>
-                );
-              })()}
+              <BalanceCard
+                balance={balances[user?.uid || '']?.netBalance || 0}
+                groupSpend={groupSpend}
+                yourShare={yourShare}
+                currency={currency}
+              />
 
               {/* Payments waiting for the receiver: not in the balance yet */}
               {pendingPayments.length > 0 && (
@@ -759,10 +768,10 @@ export const GroupDetails: React.FC = () => {
 
       {/* Add Expense bar: takes real space at the end of the page and sticks to
           the bottom while scrolling, so it can never cover the last rows */}
-      <div className="sticky bottom-0 z-20 bg-gray-50/90 backdrop-blur border-t px-4 lg:px-8 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex justify-center lg:justify-end">
+      <div className="sticky bottom-0 z-20 glass border-t border-gray-200/70 px-4 lg:px-8 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] flex justify-center lg:justify-end">
         <button
           onClick={() => setIsAddExpenseOpen(true)}
-          className="bg-blue-600 text-white px-6 py-3.5 rounded-full shadow-lg shadow-blue-200 flex items-center gap-2 whitespace-nowrap font-bold text-lg hover:bg-blue-700 transition-transform active:scale-95"
+          className="bg-blue-600 text-white px-6 py-3.5 rounded-full shadow-lg shadow-blue-600/25 flex items-center gap-2 whitespace-nowrap font-semibold text-[1.0625rem] hover:bg-blue-700 transition-transform active:scale-95"
         >
           <Plus className="w-6 h-6" /> Add Expense
         </button>
@@ -771,11 +780,11 @@ export const GroupDetails: React.FC = () => {
       {/* ── Group menu sheet ─────────────────────────────────────────────────── */}
       {showGroupMenu && (
         <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center sm:p-4"
+          className="anim-fade-in fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center sm:p-4"
           onClick={() => setShowGroupMenu(false)}
         >
           <div
-            className="bg-surface w-full max-w-md mx-auto rounded-t-2xl sm:rounded-2xl overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0"
+            className="bg-surface w-full max-w-md mx-auto sheet rounded-t-3xl sm:rounded-3xl overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0"
             onClick={e => e.stopPropagation()}
           >
             <div className="px-4 pt-4 pb-1">

@@ -3,18 +3,19 @@
 @tailwind utilities;
 
 /* ── Theme ───────────────────────────────────────────────────────────────── */
-/* RGB channels, consumed by tailwind.config.js. Light values are Tailwind's
-   defaults; dark ones invert the grey scale and deepen the pale tints. The
-   theme is chosen in src/lib/theme.ts (and before first paint in index.html). */
+/* RGB channels, consumed by tailwind.config.js. Neutral greys follow Apple's
+   system palette (grouped background, separators, labels); dark ones invert the
+   grey scale and deepen the pale tints. The theme is chosen in src/lib/theme.ts
+   (and before first paint in index.html). */
 
 :root {
   color-scheme: light;
-  --page: 249 250 251;
+  --page: 242 242 247;
   --surface: 255 255 255;
-  --gray-50: 249 250 251;  --gray-100: 243 244 246; --gray-200: 229 231 235;
-  --gray-300: 209 213 219; --gray-400: 156 163 175; --gray-500: 107 114 128;
-  --gray-600: 75 85 99;    --gray-700: 55 65 81;    --gray-800: 31 41 55;
-  --gray-900: 17 24 39;
+  --gray-50: 242 242 247;  --gray-100: 235 235 240; --gray-200: 222 222 227;
+  --gray-300: 199 199 204; --gray-400: 142 142 147; --gray-500: 108 108 112;
+  --gray-600: 72 72 74;    --gray-700: 58 58 60;    --gray-800: 28 28 30;
+  --gray-900: 0 0 0;
   --blue-50: 239 246 255;  --blue-100: 219 234 254; --blue-200: 191 219 254;
   --green-50: 240 253 244; --green-100: 220 252 231; --green-200: 187 247 208;
   --red-50: 254 242 242;   --red-100: 254 226 226;  --red-200: 254 202 202;
@@ -25,12 +26,12 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page: 11 13 18;
-  --surface: 22 26 34;
-  --gray-50: 11 13 18;     --gray-100: 31 36 46;    --gray-200: 42 48 60;
-  --gray-300: 58 65 80;    --gray-400: 124 133 149; --gray-500: 154 163 178;
-  --gray-600: 180 188 200; --gray-700: 205 211 220; --gray-800: 227 231 237;
-  --gray-900: 241 243 246;
+  --page: 0 0 0;
+  --surface: 28 28 30;
+  --gray-50: 0 0 0;        --gray-100: 44 44 46;    --gray-200: 56 56 58;
+  --gray-300: 72 72 74;    --gray-400: 128 128 133; --gray-500: 152 152 157;
+  --gray-600: 174 174 178; --gray-700: 209 209 214; --gray-800: 229 229 234;
+  --gray-900: 255 255 255;
   --blue-50: 22 34 58;     --blue-100: 28 45 82;    --blue-200: 37 62 112;
   --green-50: 18 42 30;    --green-100: 22 56 38;   --green-200: 30 80 52;
   --red-50: 50 22 24;      --red-100: 66 28 30;     --red-200: 96 40 42;
@@ -43,6 +44,9 @@
   body {
     background-color: rgb(var(--page));
     color: rgb(var(--gray-900));
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.011em; /* SF / Inter read tighter at UI sizes */
   }
   /* No grey flash on tap, and no double-tap-zoom delay on controls */
   html {
@@ -77,6 +81,28 @@
 .anim-fade-in-up { animation: fade-in-up 0.22s ease-out both; }
 .anim-fade-in    { animation: fade-in    0.18s ease-out both; }
 
+/* Sheets rise from the bottom on phones and settle in on larger screens,
+   with the soft spring Apple uses for modal presentation */
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+@keyframes sheet-in {
+  from { transform: scale(0.96); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+.sheet { animation: sheet-up 0.42s cubic-bezier(0.32, 0.72, 0, 1) both; }
+@media (min-width: 640px) {
+  .sheet { animation: sheet-in 0.24s cubic-bezier(0.32, 0.72, 0, 1) both; }
+}
+
+/* Apple-style frosted bar: translucent surface + blur over scrolling content */
+.glass {
+  background-color: rgb(var(--surface) / 0.72);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+}
+
 /* ── Toast notifications ─────────────────────────────────────────────────── */
 @keyframes toast-in {
   from { transform: translateY(16px) scale(0.95); opacity: 0; }
@@ -88,3 +114,12 @@
 }
 .anim-toast-in  { animation: toast-in  0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
 .anim-toast-out { animation: toast-out 0.2s  ease-in both; }
+
+/* Respect the OS "reduce motion" setting for every animation above */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

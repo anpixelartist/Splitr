@@ -16,10 +16,10 @@ export const NamePrompt: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4">
+    <div className="anim-fade-in fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4">
       <form
         onSubmit={save}
-        className="anim-fade-in-up bg-surface w-full max-w-sm rounded-t-2xl sm:rounded-2xl shadow-xl p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:pb-6"
+        className="bg-surface w-full max-w-sm sheet rounded-t-3xl sm:rounded-3xl shadow-xl p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:pb-6"
         aria-labelledby="name-prompt-title"
       >
         <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-4">

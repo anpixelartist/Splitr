@@ -6,7 +6,7 @@
 export type ThemePref = 'system' | 'light' | 'dark';
 
 const KEY = 'splitr_theme';
-const THEME_COLORS = { light: '#2563eb', dark: '#161a22' }; // browser/status bar
+const THEME_COLORS = { light: '#f2f2f7', dark: '#000000' }; // browser/status bar
 
 const systemDark = () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
 

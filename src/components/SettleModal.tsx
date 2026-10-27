@@ -86,11 +86,11 @@ export const SettleModal: React.FC<Props> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+    <div className="anim-fade-in fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
 
       {/* ── Success card — rendered as sibling to avoid overflow-hidden clipping the animation ── */}
       {done ? (
-        <div className="bg-surface w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col items-center px-8 pt-10 pb-8">
+        <div className="bg-surface w-full max-w-md anim-fade-in rounded-t-3xl sm:rounded-3xl shadow-xl flex flex-col items-center px-8 pt-10 pb-8">
           <div className="anim-pop-in w-24 h-24 bg-green-500 rounded-full flex items-center justify-center shadow-xl shadow-green-200 mb-5">
             <CheckCircle2 className="w-12 h-12 text-white" strokeWidth={2.5} />
           </div>
@@ -119,7 +119,7 @@ export const SettleModal: React.FC<Props> = ({
         </div>
       ) : (
         /* ── Normal modal ───────────────────────────────────────────────────── */
-        <div className="bg-surface w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col max-h-[90dvh] overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
+        <div className="bg-surface w-full max-w-md sheet rounded-t-3xl sm:rounded-3xl shadow-xl flex flex-col max-h-[90dvh] overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
 
           {/* Header */}
           <div className="p-4 border-b flex justify-between items-center shrink-0">
