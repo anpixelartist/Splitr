@@ -1,0 +1,12 @@
+# Copy to .dev.vars for `npm run dev` (wrangler dev). Never commit .dev.vars.
+#
+# Against the Firebase emulators (`npx firebase-tools@15 emulators:start --only auth,firestore --project demo-splitr`
+# from the repo root):
+FIREBASE_API_KEY=demo-key
+FIREBASE_AUTH_DOMAIN=127.0.0.1
+FIREBASE_PROJECT_ID=demo-splitr
+FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
+#
+# Against the real project instead: the app's VITE_FIREBASE_API_KEY / _AUTH_DOMAIN / _PROJECT_ID,
+# and remove the two *_EMULATOR_HOST lines.

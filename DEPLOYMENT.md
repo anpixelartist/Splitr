@@ -190,6 +190,12 @@ The emulator has a fake Google sign-in, so you can test everything.
 
 ---
 
+## AI assistant connector (optional)
+
+Splitr can also be used from Claude, ChatGPT and other AI assistants through a small connector in [`mcp/`](mcp/README.md). It is a separate Cloudflare Worker (free plan), not part of this build, and it signs people in with the same Firebase project. Setup, deploy and how to add it to each assistant: [mcp/README.md](mcp/README.md).
+
+---
+
 ## Alternatives considered
 
 - **Vercel / Netlify / Cloudflare Pages** could host the website for free too, but you'd still need Firebase for login and the database. Hosting on Firebase keeps everything in one console, and serving the sign-in handler from the same domain makes Google sign-in more reliable on iPhones.
