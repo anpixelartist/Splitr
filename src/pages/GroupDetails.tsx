@@ -7,6 +7,7 @@ import { calculateBalances, calculateSettlements, isSettled } from '../lib/settl
 import { AddExpenseModal } from '../components/AddExpenseModal';
 import { SettleModal } from '../components/SettleModal';
 import { BalanceCard } from '../components/BalanceCard';
+import { GroupPinFavoriteActions } from '../components/GroupPinFavoriteActions';
 import { useToast } from '../context/ToastContext';
 import { DEFAULT_CURRENCY, formatMoney, formatDate } from '../lib/money';
 import { unclaimedParticipants, claimedBy } from '../lib/claims';
@@ -791,6 +792,8 @@ export const GroupDetails: React.FC = () => {
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{currentGroup.name}</p>
             </div>
             <div className="divide-y">
+              <GroupPinFavoriteActions groupId={currentGroup.id} onDone={() => setShowGroupMenu(false)} />
+
               {/* Leave Group */}
               <button
                 onClick={handleLeaveGroup}

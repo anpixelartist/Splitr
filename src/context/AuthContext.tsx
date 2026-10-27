@@ -33,6 +33,11 @@ interface AuthContextType {
   /** Still an auto-generated name like "User a1b2": ask the person for theirs. */
   hasDefaultName: boolean;
   contacts: Contact[];
+  /** My own ordering of the groups list (ids); see src/lib/groupPrefs.ts */
+  pinnedGroups: string[];
+  favoriteGroups: string[];
+  setPinnedGroups: (ids: string[]) => void;
+  setFavoriteGroups: (ids: string[]) => void;
   addContact: (name: string) => Promise<Contact>;
   updateContact: (id: string, name: string) => Promise<void>;
   removeContact: (id: string) => Promise<void>;
@@ -47,6 +52,7 @@ const AuthContext = createContext<AuthContextType>({
   user: null, loading: true, isGoogleUser: false, photoURL: null, isLocalOnly: !isFirebaseConfigured,
   updateUserName: async () => {},
   userName: '', hasDefaultName: false, contacts: [],
+  pinnedGroups: [], favoriteGroups: [], setPinnedGroups: () => {}, setFavoriteGroups: () => {},
   addContact: async () => ({ id: '', name: '' }),
   updateContact: async () => {},
   removeContact: async () => {},
@@ -65,6 +71,18 @@ const lsContactsKey = (uid: string) => `splitr_contacts_${uid}`;
 
 const lsGetContacts = (uid: string): Contact[] => {
   try { return JSON.parse(localStorage.getItem(lsContactsKey(uid)) || '[]'); } catch { return []; }
+};
+
+type GroupPrefs = { pinnedGroups: string[]; favoriteGroups: string[] };
+const lsPrefsKey = (uid: string) => `splitr_group_prefs_${uid}`;
+const lsGetGroupPrefs = (uid: string): GroupPrefs => {
+  try {
+    const p = JSON.parse(localStorage.getItem(lsPrefsKey(uid)) || '{}');
+    return { pinnedGroups: p.pinnedGroups ?? [], favoriteGroups: p.favoriteGroups ?? [] };
+  } catch { return { pinnedGroups: [], favoriteGroups: [] }; }
+};
+const lsSaveGroupPrefs = (uid: string, prefs: GroupPrefs) => {
+  try { localStorage.setItem(lsPrefsKey(uid), JSON.stringify(prefs)); } catch { /* storage full / blocked */ }
 };
 
 const lsSaveContacts = (uid: string, contacts: Contact[]) => {
@@ -122,6 +140,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const userNameRef = useRef('');
   useEffect(() => { userNameRef.current = userName; }, [userName]);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [groupPrefs, setGroupPrefs] = useState<GroupPrefs>({ pinnedGroups: [], favoriteGroups: [] });
   const [authError, setAuthError] = useState<string | null>(null);
   // Linking mutates the same User object in place, so bump this to re-render.
   const [, setAuthTick] = useState(0);
@@ -139,6 +158,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (snap.exists()) {
         setUserName(snap.data().name || u.displayName || 'You');
         setContacts(snap.data().contacts || lsGetContacts(u.uid));
+        const local = lsGetGroupPrefs(u.uid);
+        setGroupPrefs({
+          pinnedGroups: snap.data().pinnedGroups ?? local.pinnedGroups,
+          favoriteGroups: snap.data().favoriteGroups ?? local.favoriteGroups,
+        });
       } else {
         const defaultName = u.displayName || `User ${u.uid.substring(0, 4)}`;
         // Don't await: offline writes only resolve once the server acknowledges them
@@ -146,10 +170,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .catch(() => {});
         setUserName(defaultName);
         setContacts(lsGetContacts(u.uid));
+        setGroupPrefs(lsGetGroupPrefs(u.uid));
       }
     } catch {
       setUserName(u.displayName || 'You');
       setContacts(lsGetContacts(u.uid));
+      setGroupPrefs(lsGetGroupPrefs(u.uid));
     }
   };
 
@@ -158,6 +184,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(mockUser);
     setUserName(localStorage.getItem('splitr_display_name') || 'You');
     setContacts(lsGetContacts(MOCK_UID));
+    setGroupPrefs(lsGetGroupPrefs(MOCK_UID));
     setLoading(false);
   };
 
@@ -233,6 +260,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setUserName('');
       setContacts([]);
+      setGroupPrefs({ pinnedGroups: [], favoriteGroups: [] });
       const pref = lsGetPref();
 
       // First visit, or the user explicitly signed out → show the login page.
@@ -305,6 +333,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setUserName('');
       setContacts([]);
+      setGroupPrefs({ pinnedGroups: [], favoriteGroups: [] });
       return;
     }
     try { await firebaseSignOut(auth); } catch { /* already signed out */ }
@@ -334,6 +363,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     setDoc(doc(db, 'users', user.uid), { name: trimmed }, { merge: true }).catch(() => {});
+  };
+
+  const saveGroupPrefs = (changes: Partial<GroupPrefs>) => {
+    const next = { ...groupPrefs, ...changes };
+    setGroupPrefs(next);
+    if (!user) return;
+    lsSaveGroupPrefs(user.uid, next);
+    if (user.uid !== MOCK_UID) {
+      setDoc(doc(db, 'users', user.uid), changes, { merge: true }).catch(() => {});
+    }
   };
 
   const saveContacts = (updated: Contact[]) => {
@@ -366,6 +405,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user, loading, isGoogleUser, photoURL, isLocalOnly: !isFirebaseConfigured,
       updateUserName, userName, hasDefaultName: !!user && isDefaultName(userName),
       contacts, addContact, updateContact, removeContact,
+      pinnedGroups: groupPrefs.pinnedGroups, favoriteGroups: groupPrefs.favoriteGroups,
+      setPinnedGroups: ids => saveGroupPrefs({ pinnedGroups: ids }),
+      setFavoriteGroups: ids => saveGroupPrefs({ favoriteGroups: ids }),
       signInWithGoogle, signOut, continueOffline, authError,
       clearAuthError: () => setAuthError(null),
     }}>

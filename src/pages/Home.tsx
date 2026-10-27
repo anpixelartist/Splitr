@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useGroup } from '../context/GroupContext';
-import { Wallet, Users, Plus, ChevronRight, HardDrive, AlertTriangle, X } from 'lucide-react';
+import { Wallet, Users, Plus, HardDrive, AlertTriangle, X, Ellipsis, Pin, Star } from 'lucide-react';
 import { CreateGroupModal } from '../components/CreateGroupModal';
 import { ProfileModal } from '../components/ProfileModal';
 import { JoinCodeInput } from '../components/JoinCodeInput';
+import { GroupPinFavoriteActions } from '../components/GroupPinFavoriteActions';
+import { orderGroups } from '../lib/groupPrefs';
 import { useToast } from '../context/ToastContext';
 import { DEFAULT_CURRENCY } from '../lib/money';
 import type { Group } from '../types';
@@ -20,7 +22,7 @@ const memberNamesOf = (group: Group) => [
 ];
 
 export const Home: React.FC = () => {
-  const { userName, photoURL, contacts, addContact, isLocalOnly, authError, clearAuthError } = useAuth();
+  const { userName, photoURL, contacts, addContact, isLocalOnly, authError, clearAuthError, pinnedGroups, favoriteGroups } = useAuth();
   const { groups, createGroup } = useGroup();
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -29,6 +31,16 @@ export const Home: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [photoFailed, setPhotoFailed] = useState(false);
+  const [menuGroup, setMenuGroup] = useState<Group | null>(null);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+
+  const hasFavorites = groups.some(g => favoriteGroups.includes(g.id));
+  // Falls back to all groups once the last favourite is removed
+  const showFavorites = favoritesOnly && hasFavorites;
+  const shownGroups = useMemo(
+    () => orderGroups(groups, pinnedGroups, favoriteGroups, showFavorites),
+    [groups, pinnedGroups, favoriteGroups, showFavorites],
+  );
 
   const handleCreateGroup = async (
     groupName: string,
@@ -148,7 +160,27 @@ export const Home: React.FC = () => {
 
       {/* ── Groups list: an iOS inset-grouped list ── */}
       <section>
-        <h2 className="text-[1.375rem] font-bold tracking-tight mb-3 px-1">Your Groups</h2>
+        <div className="flex items-center justify-between gap-3 mb-3 px-1">
+          <h2 className="text-[1.375rem] font-bold tracking-tight">Your Groups</h2>
+          {hasFavorites && (
+            <div className="grid grid-cols-2 bg-gray-200/70 rounded-lg p-0.5 text-sm font-medium" role="radiogroup" aria-label="Show">
+              {([['All', false], ['Favourites', true]] as const).map(([label, value]) => (
+                <button
+                  key={label}
+                  type="button"
+                  role="radio"
+                  aria-checked={showFavorites === value}
+                  onClick={() => setFavoritesOnly(value)}
+                  className={`px-3 py-1 rounded-md transition-colors ${
+                    showFavorites === value ? 'bg-surface shadow-sm text-gray-900' : 'text-gray-500'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         {groups.length === 0 ? (
           <div className="bg-surface rounded-3xl py-12 px-6 text-center">
             <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-3">
@@ -159,13 +191,15 @@ export const Home: React.FC = () => {
           </div>
         ) : (
           <div className="bg-surface rounded-3xl overflow-hidden">
-            {groups.map(group => {
+            {shownGroups.map(group => {
               const names = memberNamesOf(group);
+              const isPinned = pinnedGroups.includes(group.id);
+              const isFavorite = favoriteGroups.includes(group.id);
               return (
+                <div key={group.id} className="group flex items-center">
                 <button
-                  key={group.id}
                   onClick={() => navigate(`/group/${group.id}`)}
-                  className="group w-full text-left flex items-center gap-3 pl-4 hover:bg-gray-50 active:bg-gray-100 transition-colors"
+                  className="flex-1 min-w-0 text-left flex items-center gap-3 pl-4 hover:bg-gray-50 active:bg-gray-100 transition-colors"
                 >
                   <div className={`w-10 h-10 rounded-xl ${tintFor(group.id)} flex items-center justify-center text-white font-semibold shrink-0`}>
                     {group.name.charAt(0).toUpperCase()}
@@ -173,7 +207,11 @@ export const Home: React.FC = () => {
                   {/* Hairline separators start after the icon, as in iOS lists */}
                   <div className="flex-1 min-w-0 flex items-center gap-3 py-3 pr-3 border-b border-gray-200/70 group-last:border-b-0">
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-gray-900 truncate">{group.name}</h3>
+                      <h3 className="font-semibold text-gray-900 flex items-center gap-1.5 min-w-0">
+                        <span className="truncate">{group.name}</span>
+                        {isFavorite && <Star className="w-3.5 h-3.5 shrink-0 text-[#FF9F0A] fill-current" aria-label="Favourite" />}
+                        {isPinned && <Pin className="w-3.5 h-3.5 shrink-0 text-gray-400 fill-current" aria-label="Pinned" />}
+                      </h3>
                       <p className="text-sm text-gray-500">
                         {names.length} {names.length === 1 ? 'member' : 'members'} · {group.currency ?? DEFAULT_CURRENCY}
                       </p>
@@ -190,9 +228,16 @@ export const Home: React.FC = () => {
                         </div>
                       )}
                     </div>
-                    <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
                   </div>
                 </button>
+                <button
+                  onClick={() => setMenuGroup(group)}
+                  className="self-stretch px-3 text-gray-400 hover:text-gray-600 hover:bg-gray-50 border-b border-gray-200/70 group-last:border-b-0 transition-colors"
+                  aria-label={`Options for ${group.name}`}
+                >
+                  <Ellipsis className="w-5 h-5" />
+                </button>
+                </div>
               );
             })}
           </div>
@@ -208,6 +253,33 @@ export const Home: React.FC = () => {
           onClose={() => setShowCreateModal(false)}
           onCreate={handleCreateGroup}
         />
+      )}
+
+      {menuGroup && (
+        <div
+          className="anim-fade-in fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center sm:p-4"
+          onClick={() => setMenuGroup(null)}
+        >
+          <div
+            className="bg-surface w-full max-w-md mx-auto sheet rounded-t-3xl sm:rounded-3xl overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-4 pt-4 pb-1">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{menuGroup.name}</p>
+            </div>
+            <div className="divide-y">
+              <GroupPinFavoriteActions groupId={menuGroup.id} onDone={() => setMenuGroup(null)} />
+            </div>
+            <div className="p-3">
+              <button
+                onClick={() => setMenuGroup(null)}
+                className="w-full py-3 rounded-xl bg-gray-100 text-gray-600 font-medium hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showProfile && (
