@@ -20,7 +20,7 @@ const memberNamesOf = (group: Group) => [
 ];
 
 export const Home: React.FC = () => {
-  const { userName, contacts, addContact, isLocalOnly, authError, clearAuthError } = useAuth();
+  const { userName, photoURL, contacts, addContact, isLocalOnly, authError, clearAuthError } = useAuth();
   const { groups, createGroup } = useGroup();
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -28,6 +28,7 @@ export const Home: React.FC = () => {
   const [joinCode, setJoinCode] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [photoFailed, setPhotoFailed] = useState(false);
 
   const handleCreateGroup = async (
     groupName: string,
@@ -80,9 +81,19 @@ export const Home: React.FC = () => {
           title="Profile & contacts"
           aria-label="Profile & contacts"
         >
-          <div className="w-9 h-9 bg-gradient-to-b from-gray-300 to-gray-400 text-white rounded-full flex items-center justify-center font-semibold text-sm select-none">
-            {userName.charAt(0).toUpperCase()}
-          </div>
+          {photoURL && !photoFailed ? (
+            <img
+              src={photoURL}
+              alt=""
+              className="w-9 h-9 rounded-full object-cover"
+              referrerPolicy="no-referrer"
+              onError={() => setPhotoFailed(true)}
+            />
+          ) : (
+            <div className="w-9 h-9 bg-gradient-to-b from-gray-300 to-gray-400 text-white rounded-full flex items-center justify-center font-semibold text-sm select-none">
+              {userName.charAt(0).toUpperCase()}
+            </div>
+          )}
           <span className="text-sm font-medium text-gray-700 hidden sm:block">{userName}</span>
         </button>
       </header>

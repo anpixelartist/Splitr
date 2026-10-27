@@ -24,6 +24,8 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   isGoogleUser: boolean;
+  /** Google profile picture, or null for guests */
+  photoURL: string | null;
   /** true when running without Firebase: data never leaves this browser */
   isLocalOnly: boolean;
   updateUserName: (name: string) => Promise<void>;
@@ -42,7 +44,7 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType>({
-  user: null, loading: true, isGoogleUser: false, isLocalOnly: !isFirebaseConfigured,
+  user: null, loading: true, isGoogleUser: false, photoURL: null, isLocalOnly: !isFirebaseConfigured,
   updateUserName: async () => {},
   userName: '', hasDefaultName: false, contacts: [],
   addContact: async () => ({ id: '', name: '' }),
@@ -125,6 +127,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [, setAuthTick] = useState(0);
 
   const isGoogleUser = !!(user && !user.isAnonymous && user.providerData?.length > 0);
+  // Like the name, a linked anonymous account only has the photo on the provider entry.
+  const photoURL = isGoogleUser
+    ? user!.photoURL || user!.providerData.find(p => p.providerId === GoogleAuthProvider.PROVIDER_ID)?.photoURL || null
+    : null;
 
   // ── Load user profile from Firestore (or localStorage fallback) ────────────
   const loadProfile = async (u: User) => {
@@ -357,7 +363,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   return (
     <AuthContext.Provider value={{
-      user, loading, isGoogleUser, isLocalOnly: !isFirebaseConfigured,
+      user, loading, isGoogleUser, photoURL, isLocalOnly: !isFirebaseConfigured,
       updateUserName, userName, hasDefaultName: !!user && isDefaultName(userName),
       contacts, addContact, updateContact, removeContact,
       signInWithGoogle, signOut, continueOffline, authError,

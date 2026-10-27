@@ -15,7 +15,7 @@ interface Props {
 }
 
 export const ProfileModal: React.FC<Props> = ({ onClose }) => {
-  const { userName, updateUserName, contacts, addContact, updateContact, removeContact, signInWithGoogle, signOut, isGoogleUser, isLocalOnly, user, authError, clearAuthError } = useAuth();
+  const { userName, updateUserName, contacts, addContact, updateContact, removeContact, signInWithGoogle, signOut, isGoogleUser, photoURL, isLocalOnly, user, authError, clearAuthError } = useAuth();
 
   // Name editing
   const [editingName, setEditingName] = useState(false);
@@ -163,8 +163,8 @@ export const ProfileModal: React.FC<Props> = ({ onClose }) => {
             <h3 className="font-semibold text-gray-700 mb-3">Account</h3>
             {isGoogleUser ? (
               <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center gap-3">
-                {user?.photoURL ? (
-                  <img src={user.photoURL} alt="" className="w-10 h-10 rounded-full shrink-0" referrerPolicy="no-referrer" />
+                {photoURL ? (
+                  <img src={photoURL} alt="" className="w-10 h-10 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
                 ) : (
                   <div className="w-10 h-10 rounded-full bg-blue-200 flex items-center justify-center shrink-0">
                     <UserCircle className="w-6 h-6 text-blue-600 dark:text-blue-400" />
