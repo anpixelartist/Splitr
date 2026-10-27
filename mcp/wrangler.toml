@@ -10,7 +10,7 @@ compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 # Create it once with `npx wrangler kv namespace create OAUTH_KV` and paste the id here.
 [[kv_namespaces]]
 binding = "OAUTH_KV"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+id = "c9f5c35c1e4a4277995c1a4c62f7d118"
 
 # Not set here, on purpose (same values as the app's VITE_FIREBASE_*):
 #   FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN, FIREBASE_PROJECT_ID
