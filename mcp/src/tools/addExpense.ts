@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { Expense } from '../../../src/types';
 import { splitEqually, validateExpense } from '../../../src/lib/settlement';
 import { UserFacingError, currencyOf, digitsOf, moneyIn, peopleIn, pickGroup, pickPerson } from '../group';
-import { WRITES, run, type RegisterTool } from './common';
+import { WRITES, run, spentOn, type RegisterTool } from './common';
 import { groupInput } from './groupSummary';
 
 // Saves an expense exactly as the app's addExpense does (GroupContext.tsx):
@@ -25,6 +25,8 @@ export const registerAddExpense: RegisterTool = (server, { session }) => {
         .describe('Split equally between these people (names; "me" for the user). Leave out for everyone in the group.'),
       exact_shares: z.array(z.object({ person: z.string(), amount: z.number().nonnegative() })).optional()
         .describe('Set amounts per person instead of an equal split. They must add up to the total.'),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+        .describe('The day it was spent, YYYY-MM-DD (e.g. from a bill). Leave out for today.'),
     }),
     annotations: WRITES,
   }, (args) => run(async () => {
@@ -64,6 +66,8 @@ export const registerAddExpense: RegisterTool = (server, { session }) => {
       splits,
       createdBy: session.uid,
       createdAt: new Date().toISOString(),
+      date: args.date ?? new Date(Date.now()).toISOString().slice(0, 10),
+      split: { method: args.exact_shares ? 'exact' : 'equal' },
     };
     const db = await session.db();
     await db.commit([{ path: `groups/${group.id}/expenses/${expense.id}`, data: expense, mustNotExist: true }]);
@@ -71,7 +75,7 @@ export const registerAddExpense: RegisterTool = (server, { session }) => {
     const money = moneyIn(group);
     const name = (id: string) => (id === session.uid ? 'you' : people.find(p => p.id === id)!.name);
     return [
-      `Saved in ${group.name}: "${description}", ${money(amount)}, paid by ${name(paidBy)}.`,
+      `Saved in ${group.name}: "${description}", ${money(amount)}, paid by ${name(paidBy)}, on ${spentOn(expense)}.`,
       'Shares:',
       ...splits.map(s => `- ${name(s.userId)}: ${money(s.amount)}`),
       `Expense id ${expense.id}. To change or delete it, use the Splitr app.`,

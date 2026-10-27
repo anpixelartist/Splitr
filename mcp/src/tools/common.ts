@@ -3,7 +3,7 @@ import { FirestoreError } from '../firestore';
 import { FirebaseAuthError } from '../token';
 import { UserFacingError } from '../group';
 import type { Session } from '../session';
-import { formatDate } from '../../../src/lib/money';
+import { formatDate, formatDay } from '../../../src/lib/money';
 
 export type ToolDeps = { session: Session; now?: () => number };
 export type RegisterTool = (server: McpServer, deps: ToolDeps) => void;
@@ -35,6 +35,9 @@ export async function run(body: () => Promise<string>): Promise<CallToolResult> 
 
 /** "24 Oct 2026", never 10/24/2026. */
 export const day = (v: string | number) => formatDate(v, 'en-GB');
+
+/** When an expense was spent: its date, or when it was added for older ones. */
+export const spentOn = (e: { date?: string; createdAt: string }) => (e.date ? formatDay(e.date, 'en-GB') : day(e.createdAt));
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 

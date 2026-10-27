@@ -23,13 +23,14 @@ describe('add_expense', () => {
     const w = writes[0];
     expect(w.currentDocument).toEqual({ exists: false });
     const f = fieldsOf(w);
-    expect(Object.keys(f).sort()).toEqual(['amount', 'createdAt', 'createdBy', 'description', 'groupId', 'id', 'paidBy', 'splits']);
+    expect(Object.keys(f).sort()).toEqual(['amount', 'createdAt', 'createdBy', 'date', 'description', 'groupId', 'id', 'paidBy', 'split', 'splits']);
+    expect(f.date).toBe('2026-10-27');
     expect(w.update.name).toMatch(new RegExp(`/documents/groups/GOA111/expenses/${f.id}$`));
     expect(f).toMatchObject({ groupId: 'GOA111', description: 'Boat ride', amount: '1000', paidBy: 'u1', createdBy: 'u1' });
     // Members plus Rahul (unclaimed), not Amit's claimed placeholder
     const splits = (f.splits as any).values.map((v: any) => v.mapValue.fields.userId.stringValue);
     expect(splits).toEqual(['u1', 'u2', 'u3', 'p1']);
-    expect(text).toContain('Saved in Goa Trip: "Boat ride", ₹1,000.00, paid by you.');
+    expect(text).toContain('Saved in Goa Trip: "Boat ride", ₹1,000.00, paid by you, on 27 Oct 2026.');
     expect(text).toContain('- Rahul: ₹250.00');
   });
 
@@ -40,6 +41,7 @@ describe('add_expense', () => {
     expect(writes).toHaveLength(1);
     expect(text).toContain('paid by Priya');
     expect(text).toContain('- you: ¥501');
+    expect(text).toContain('on 27 Oct 2026');
     expect(text).toContain('- Priya: ¥500');
   });
 
@@ -57,6 +59,12 @@ describe('add_expense', () => {
     });
     expect(bad).toMatchObject({ isError: true, writes: [] });
     expect(bad.text).toContain("don't add up");
+  });
+
+  it('saves the day it was spent when given one', async () => {
+    const { text, writes } = await write('add_expense', { group: 'flat', description: 'Rice', amount: 1000, date: '2026-10-03' });
+    expect(fieldsOf(writes[0]).date).toBe('2026-10-03');
+    expect(text).toContain('on 3 Oct 2026');
   });
 
   it('refuses decimals in a currency without them, and unknown people', async () => {

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { moneyIn, namer, pickGroup } from '../group';
-import { READ_ONLY, day, plural, run, type RegisterTool } from './common';
+import { READ_ONLY, plural, run, spentOn, type RegisterTool } from './common';
 import { groupInput } from './groupSummary';
 
 export const registerListExpenses: RegisterTool = (server, { session }) => {
@@ -34,7 +34,7 @@ export const registerListExpenses: RegisterTool = (server, { session }) => {
     const lines = shown.map(e => {
       const mine = e.splits.find(s => s.userId === session.uid)?.amount;
       const split = e.splits.length === 1 ? `for ${name(e.splits[0].userId)}` : `split ${e.splits.length} ways`;
-      return `- ${day(e.createdAt)} · ${e.description} · ${money(e.amount)} · paid by ${name(e.paidBy)} · ${split}`
+      return `- ${spentOn(e)} · ${e.description} · ${money(e.amount)} · paid by ${name(e.paidBy)} · ${split}`
         + (mine !== undefined ? ` (your share ${money(mine)})` : ' (you\'re not in it)');
     });
     const scope = needle ? ` matching "${search}"` : '';

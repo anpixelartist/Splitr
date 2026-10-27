@@ -49,7 +49,7 @@ Writes (annotated `readOnlyHint: false`, so assistants ask before calling them).
 
 | Tool | Does | Same rules as the app |
 | --- | --- | --- |
-| `add_expense` | Adds an expense: who paid (default: me), split equally between everyone or named people, or exact shares | `splitEqually` with the currency's decimals, `validateExpense`, the app's eight fields |
+| `add_expense` | Adds an expense: who paid (default: me), split equally between everyone or named people, or exact shares; optional date it was spent | `splitEqually` with the currency's decimals, `validateExpense`, the app's eight fields |
 | `record_payment` | Records a payment from the group's "who pays whom" plan, in full or in part | Only plan payments, at most what's owed; `initialStatus` (pending until the receiver confirms); server `recordedAt` |
 | `confirm_payment` | Confirms a pending payment made to me | Only when `allowedActions` allows it; changes only `status`, `decidedBy`, server `decidedAt` |
 | `reject_payment` | Rejects a pending payment made to me (marked `destructiveHint`) | Same as above |
