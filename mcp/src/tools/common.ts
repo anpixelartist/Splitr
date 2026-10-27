@@ -37,3 +37,6 @@ export async function run(body: () => Promise<string>): Promise<CallToolResult> 
 export const day = (v: string | number) => formatDate(v, 'en-GB');
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** Tools that save something: the assistant should check with the user first. */
+export const WRITES = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;

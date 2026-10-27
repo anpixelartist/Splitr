@@ -125,6 +125,42 @@ describe.skipIf(!AUTH || !FIRESTORE)('connector against the emulators', () => {
     expect(typeof saved?.recordedAt).toBe('number');
   });
 
+  it('the write tools save what the rules accept, and only the receiver can confirm', async () => {
+    const SHARED = `S${run}`;
+    await admin.commit([
+      { path: `groups/${SHARED}`, data: {
+        id: SHARED, name: `Shared ${run}`, members: [alice.uid, bob.uid], admins: [bob.uid], createdBy: bob.uid,
+        memberNames: { [alice.uid]: 'Alice', [bob.uid]: 'Bob' }, currency: 'JPY', createdAt: new Date().toISOString(),
+      } },
+    ]);
+    const tool = (who: Props, name: string, args: Record<string, unknown>) => callTool(fetch, who, name, { group: SHARED, ...args }, undefined, env);
+
+    const added = await tool(bob, 'add_expense', { description: 'Ramen', amount: 3001 });
+    expect(added.isError).toBe(false);
+    expect(added.text).toContain('- Alice: ¥1,501');
+    expect(added.text).toContain('- you: ¥1,500');
+
+    const paid = await tool(alice, 'record_payment', { to: 'Bob', amount: 1000 });
+    expect(paid.text).toContain('pending');
+    const id = paid.text.match(/Payment id (\S+)\./)![1];
+    const saved = await admin.get(`groups/${SHARED}/settlements/${id}`);
+    expect(saved).toMatchObject({ from: alice.uid, to: bob.uid, amount: 1000, recordedBy: alice.uid, status: 'pending' });
+    expect(typeof saved?.recordedAt).toBe('number');
+
+    // Alice can't confirm her own payment: the tool says so, and so do the rules
+    expect((await tool(alice, 'confirm_payment', { payment_id: id })).isError).toBe(true);
+    const db = await asUser(alice);
+    await expect(db.commit([{
+      path: `groups/${SHARED}/settlements/${id}`, data: { status: 'confirmed', decidedBy: alice.uid },
+      updateFields: ['status', 'decidedBy'], serverTime: ['decidedAt'],
+    }])).rejects.toMatchObject({ permissionDenied: true });
+
+    const confirmed = await tool(bob, 'confirm_payment', { payment_id: id });
+    expect(confirmed.text).toContain('Confirmed');
+    expect(await admin.get(`groups/${SHARED}/settlements/${id}`)).toMatchObject({ status: 'confirmed', decidedBy: bob.uid });
+    expect((await tool(alice, 'get_group_summary', {})).text).toContain('You pay Bob ¥501');
+  });
+
   it('sees guest (anonymous) accounts for what they are', async () => {
     const guest = await signUp();
     const token = await exchangeRefreshToken(env, guest.refreshToken);

@@ -126,3 +126,19 @@ export function pickGroup(groups: Group[], query: string): Group {
     `"${query}" matches more than one group: ${hits.map(g => `"${g.name}" (${g.id})`).join(', ')}. Which one? You can pass the code.`,
   );
 }
+
+const ME = new Set(['me', 'i', 'myself', 'you', 'self']);
+
+/** One person in the group from a name ("me" is the signed-in user), or a clear question back. */
+export function pickPerson(people: { id: string; name: string }[], query: string, uid: string): { id: string; name: string } {
+  const q = query.trim().toLowerCase();
+  if (ME.has(q)) {
+    const me = people.find(p => p.id === uid);
+    if (me) return me;
+  }
+  const hits = fuzzyFind(people, query, p => p);
+  if (hits.length === 1) return hits[0];
+  const all = people.map(p => p.name).join(', ');
+  if (hits.length === 0) throw new UserFacingError(`Nobody called "${query}" is in this group. People: ${all}.`);
+  throw new UserFacingError(`"${query}" could be ${hits.map(p => p.name).join(' or ')}. Which one?`);
+}

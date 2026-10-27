@@ -35,7 +35,7 @@ Assistant ──OAuth 2.1 (DCR / CIMD, PKCE)──▶ Worker /authorize ──�
 
 ## Tools
 
-All read-only for now (annotated `readOnlyHint: true`):
+Read-only (annotated `readOnlyHint: true`, safe to call without asking):
 
 | Tool | Answers |
 | --- | --- |
@@ -45,7 +45,16 @@ All read-only for now (annotated `readOnlyHint: true`):
 | `my_balances` | Across all groups: who I owe and who owes me, per person, per currency |
 | `list_pending_payments` | Payments waiting for me to confirm, and mine waiting on others |
 
-Write tools (`add_expense`, `record_payment`, `confirm_payment`, `reject_payment`) come in phase 2.
+Writes (annotated `readOnlyHint: false`, so assistants ask before calling them). Each one saves exactly what the app would and replies with exactly what was saved:
+
+| Tool | Does | Same rules as the app |
+| --- | --- | --- |
+| `add_expense` | Adds an expense: who paid (default: me), split equally between everyone or named people, or exact shares | `splitEqually` with the currency's decimals, `validateExpense`, the app's eight fields |
+| `record_payment` | Records a payment from the group's "who pays whom" plan, in full or in part | Only plan payments, at most what's owed; `initialStatus` (pending until the receiver confirms); server `recordedAt` |
+| `confirm_payment` | Confirms a pending payment made to me | Only when `allowedActions` allows it; changes only `status`, `decidedBy`, server `decidedAt` |
+| `reject_payment` | Rejects a pending payment made to me (marked `destructiveHint`) | Same as above |
+
+There is deliberately no tool to delete or edit groups or expenses, cancel payments, or join a group. Those stay in the app.
 
 ## One-time setup
 
@@ -103,8 +112,8 @@ npx @modelcontextprotocol/inspector          # Transport: Streamable HTTP, URL a
 The emulator's sign-in popup offers fake Google accounts. Groups made in the app with `VITE_USE_EMULATORS=true npm run dev` show up in the connector.
 
 ```bash
-npm test                  # unit tests (mocked Firestore): names, claims, balances, currencies, encoding
-npm run test:integration  # against the Auth + Firestore emulators: no access to other people's groups
+npm test                  # unit tests (mocked Firestore): names, claims, balances, currencies, the exact writes
+npm run test:integration  # against the Auth + Firestore emulators: no access to other people's groups; writes pass the real rules
 npm run typecheck
 ```
 
