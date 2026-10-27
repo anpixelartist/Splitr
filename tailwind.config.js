@@ -15,11 +15,17 @@ export default {
   darkMode: ['selector', '[data-theme="dark"]'],
   theme: {
     extend: {
+      // Apple devices get their own SF Pro (no download); everyone else gets
+      // self-hosted Inter, the closest open match, before the generic fallbacks
+      fontFamily: {
+        sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"', '"Inter Variable"', 'system-ui', 'Segoe UI', 'Roboto', 'sans-serif'],
+      },
       colors: {
         surface: v('surface'),
         gray: scale('gray', [50, 100, 200, 300, 400, 500, 600, 700, 800, 900]),
         // Only the pale tints flip; saturated shades read well on both themes
-        blue: scale('blue', [50, 100, 200]),
+        // Saturated blues are Apple's button blue (#0071E3, 4.6:1 with white text)
+        blue: { ...scale('blue', [50, 100, 200]), 500: '#0077ED', 600: '#0071E3', 700: '#0066CC' },
         green: scale('green', [50, 100, 200]),
         red: scale('red', [50, 100, 200]),
         amber: scale('amber', [50, 100, 200]),

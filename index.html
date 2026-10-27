@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#2563eb" />
+    <meta name="theme-color" content="#f2f2f7" />
     <meta name="description" content="Split group expenses fairly and settle up." />
     <link rel="apple-touch-icon" href="/pwa-192x192.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -18,7 +18,7 @@
         var dark = pref === 'dark' || (pref !== 'light' && window.matchMedia &&
           window.matchMedia('(prefers-color-scheme: dark)').matches);
         document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-        if (dark) document.querySelector('meta[name="theme-color"]').setAttribute('content', '#161a22');
+        if (dark) document.querySelector('meta[name="theme-color"]').setAttribute('content', '#000000');
       })();
     </script>
   </head>

@@ -36,16 +36,24 @@ export const LoginPage: React.FC = () => {
   const inviteCode = useLocation().pathname.match(/^\/group\/([A-Za-z0-9]{4,12})$/)?.[1]?.toUpperCase();
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-6">
-      <div className="w-full max-w-sm">
+    <div className="relative min-h-screen overflow-hidden flex items-center justify-center p-6">
+      {/* Backdrop: two blurred colour glows over a faint dot grid. Pure CSS and
+          static, so it paints with the page and never animates or reflows. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0 opacity-60 [background-image:radial-gradient(rgb(var(--gray-300))_1px,transparent_1px)] [background-size:22px_22px] [mask-image:radial-gradient(ellipse_at_center,black_30%,transparent_75%)]" />
+        <div className="absolute -top-32 left-1/2 -translate-x-[70%] w-[28rem] h-[28rem] rounded-full bg-blue-500/20 blur-3xl" />
+        <div className="absolute -bottom-40 left-1/2 -translate-x-[10%] w-[26rem] h-[26rem] rounded-full bg-[#BF5AF2]/15 blur-3xl" />
+      </div>
+
+      <div className="relative w-full max-w-sm">
 
         {/* Logo */}
-        <div className="flex flex-col items-center mb-10">
-          <div className="w-20 h-20 bg-blue-600 rounded-3xl flex items-center justify-center shadow-lg shadow-blue-200 mb-5">
+        <div className="anim-fade-in-up flex flex-col items-center mb-10">
+          <div className="w-20 h-20 rounded-[1.4rem] bg-gradient-to-b from-[#2E8BFF] to-blue-600 flex items-center justify-center shadow-xl shadow-blue-600/30 mb-5">
             <Wallet className="w-10 h-10 text-white" />
           </div>
-          <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight">Splitr</h1>
-          <p className="text-gray-500 mt-2 text-center">Split group expenses fairly,<br />settle up instantly.</p>
+          <h1 className="text-[2.5rem] font-bold text-gray-900 tracking-tight">Splitr</h1>
+          <p className="text-gray-500 mt-1 text-center text-[1.0625rem]">Split group expenses fairly,<br />settle up instantly.</p>
         </div>
 
         {inviteCode && (
@@ -61,7 +69,7 @@ export const LoginPage: React.FC = () => {
         )}
 
         {/* Card */}
-        <div className="bg-surface rounded-2xl shadow-xl p-6 space-y-4">
+        <div className="bg-surface/80 backdrop-blur-xl rounded-3xl shadow-[0_1px_2px_rgb(0_0_0/0.04),0_24px_48px_-24px_rgb(0_0_0/0.25)] p-6 space-y-4">
 
           {/* Error */}
           {shownError && (
@@ -75,7 +83,7 @@ export const LoginPage: React.FC = () => {
           <button
             onClick={handleGoogle}
             disabled={googleLoading || offlineLoading}
-            className="w-full flex items-center justify-center gap-3 bg-surface border-2 border-gray-200 hover:border-blue-400 hover:bg-blue-50 text-gray-800 font-semibold py-3.5 rounded-xl transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-3 bg-surface border-2 border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-900 font-semibold py-3.5 rounded-full transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {googleLoading ? (
               <span className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
@@ -102,7 +110,7 @@ export const LoginPage: React.FC = () => {
           <button
             onClick={handleOffline}
             disabled={googleLoading || offlineLoading}
-            className="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-3 rounded-xl transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-3.5 rounded-full transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {offlineLoading ? (
               <span className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />

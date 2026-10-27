@@ -132,13 +132,13 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div className="anim-fade-in fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4">
       {/* Modal card — position:relative so the success overlay can sit on top */}
-      <div className="bg-surface w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col max-h-[90dvh] relative overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
+      <div className="bg-surface w-full max-w-md sheet rounded-t-3xl sm:rounded-3xl shadow-xl flex flex-col max-h-[90dvh] relative overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
 
         {/* ── Success overlay ─────────────────────────────────────────────── */}
         {saved && (
-          <div className="absolute inset-0 bg-surface flex flex-col items-center justify-center z-20 rounded-t-2xl sm:rounded-2xl">
+          <div className="absolute inset-0 bg-surface flex flex-col items-center justify-center z-20 rounded-t-3xl sm:rounded-3xl">
             <div className="anim-pop-in w-24 h-24 bg-green-500 rounded-full flex items-center justify-center shadow-xl shadow-green-200 mb-5">
               <CheckCircle2 className="w-12 h-12 text-white" strokeWidth={2.5} />
             </div>
@@ -149,7 +149,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
         )}
 
         {/* ── Header ──────────────────────────────────────────────────────── */}
-        <div className="p-4 border-b flex justify-between items-center sticky top-0 bg-surface rounded-t-2xl z-10">
+        <div className="p-4 border-b flex justify-between items-center sticky top-0 bg-surface rounded-t-3xl z-10">
           <h2 className="text-xl font-bold">{!expense ? 'Add Expense' : readOnly ? 'Expense' : 'Edit Expense'}</h2>
           <button onClick={onClose} disabled={saving} className="p-2 rounded-full hover:bg-gray-100 disabled:opacity-40" aria-label="Close">
             <X className="w-6 h-6 text-gray-500" />
@@ -289,7 +289,7 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
         </div>
 
         {/* ── Footer / submit ──────────────────────────────────────────────── */}
-        <div className="p-4 border-t bg-gray-50 rounded-b-2xl">
+        <div className="p-4 border-t bg-gray-50 sm:rounded-b-3xl">
           {readOnly ? (
             <p className="text-sm text-center text-gray-500 py-2">
               Only the person who added this expense or an admin can change it.

@@ -65,8 +65,8 @@ export const CreateGroupModal: React.FC<Props> = ({
   const selectedContacts = localContacts.filter(c => selectedIds.has(c.id));
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-      <div className="bg-surface w-full max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col max-h-[90dvh] pb-[env(safe-area-inset-bottom)] sm:pb-0">
+    <div className="anim-fade-in fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+      <div className="bg-surface w-full max-w-md sheet rounded-t-3xl sm:rounded-3xl shadow-xl flex flex-col max-h-[90dvh] pb-[env(safe-area-inset-bottom)] sm:pb-0">
 
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b shrink-0">

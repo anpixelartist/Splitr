@@ -12,12 +12,21 @@ export default defineConfig({
       devOptions: {
         enabled: false
       },
+      // Inter is only fetched by devices without SF Pro, so it isn't precached
+      // (iPhones would download it for nothing); cache it on first use instead
+      workbox: {
+        runtimeCaching: [{
+          urlPattern: ({ request }) => request.destination === 'font',
+          handler: 'CacheFirst',
+          options: { cacheName: 'fonts', expiration: { maxEntries: 10 } },
+        }],
+      },
       manifest: {
         name: 'Splitr',
         short_name: 'Splitr',
         description: 'Local-first group expense and bill-settlement application.',
-        theme_color: '#2563eb',
-        background_color: '#ffffff',
+        theme_color: '#f2f2f7',
+        background_color: '#f2f2f7',
         display: 'standalone',
         icons: [
           {
