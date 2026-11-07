@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyClaims, unclaimedParticipants, claimedBy } from './claims';
+import { applyClaims, unclaimedParticipants, claimedBy, groupPeople, memberCount } from './claims';
 import { calculateBalances, calculateSettlements } from './settlement';
 import type { Expense, SettlementRecord } from '../types';
 
@@ -43,5 +43,28 @@ describe('claiming a name-only participant', () => {
     expect(unclaimedParticipants(ps, { p1: 'u' })).toEqual([{ id: 'p2', name: 'Amit' }]);
     expect(claimedBy({ p1: 'u' }, 'u')).toBe('p1');
     expect(claimedBy({ p1: 'u' }, 'v')).toBeUndefined();
+  });
+});
+
+describe('counting the people in a group', () => {
+  // Created by Rahul (uid r) with Priya (p1) and Amit (p2) added by name
+  const created = {
+    members: ['r'],
+    participants: [{ id: 'p1', name: 'Priya' }, { id: 'p2', name: 'Amit' }],
+  };
+
+  it('counts the creator plus everyone added by name', () => {
+    expect(memberCount(created)).toBe(3);
+  });
+
+  it('stays the same when someone joins and says which name is theirs', () => {
+    const joined = { ...created, members: ['r', 'priyaUid'], claims: { p1: 'priyaUid' } };
+    expect(memberCount(joined)).toBe(3);
+    expect(groupPeople(joined).unclaimed.map(p => p.name)).toEqual(['Amit']);
+  });
+
+  it('goes up by one only for someone new', () => {
+    const joined = { ...created, members: ['r', 'newUid'] };
+    expect(memberCount(joined)).toBe(4);
   });
 });

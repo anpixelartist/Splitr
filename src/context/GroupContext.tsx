@@ -2,14 +2,14 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { db, isFirebaseConfigured } from '../firebase/config';
 import {
   collection, query, where, onSnapshot, doc, getDoc, getDocs,
-  setDoc, updateDoc, deleteDoc, arrayUnion, writeBatch, deleteField, FieldPath, serverTimestamp,
+  setDoc, updateDoc, deleteDoc, arrayUnion, writeBatch, runTransaction, deleteField, FieldPath, serverTimestamp,
   type DocumentReference,
 } from 'firebase/firestore';
 import type { Group, Expense, SettlementRecord, PaymentStatus } from '../types';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { calculateBalances, isSettled, validateExpense } from '../lib/settlement';
-import { applyClaims, resolveId } from '../lib/claims';
+import { applyClaims, resolveId, groupPeople } from '../lib/claims';
 import { initialStatus, countsTowardBalances } from '../lib/payments';
 import { DEFAULT_CURRENCY, currencyDigits } from '../lib/money';
 import { v4 as uuidv4 } from 'uuid';
@@ -111,7 +111,8 @@ const resolveIsAdmin = (group: Group | null, uid: string | undefined): boolean =
 // ─── Context types ───────────────────────────────────────────────────────────
 
 export type GroupStatus = 'idle' | 'loading' | 'ready' | 'not-found';
-export type JoinResult = 'joined' | 'not-found' | 'offline' | 'unavailable' | 'error';
+// 'claim-taken': the name they picked was claimed by someone else first
+export type JoinResult = 'joined' | 'not-found' | 'offline' | 'unavailable' | 'claim-taken' | 'error';
 
 interface GroupContextType {
   groups: Group[];
@@ -480,10 +481,14 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // A claimed placeholder's name becomes the joiner's name if they haven't
   // chosen one yet ("User a1b2" → "Priya").
-  const adoptParticipantName = (group: Group | null, participantId: string) => {
+  const nameAfterClaim = (group: Group | null, participantId: string) => {
     const name = group?.participants?.find(p => p.id === participantId)?.name;
-    if (name && hasDefaultName) updateUserName(name);
     return name && hasDefaultName ? name : userName;
+  };
+  const adoptParticipantName = (group: Group | null, participantId: string) => {
+    const name = nameAfterClaim(group, participantId);
+    if (name !== userName) updateUserName(name);
+    return name;
   };
 
   const joinGroup = async (rawCode: string, claimId?: string): Promise<JoinResult> => {
@@ -495,20 +500,39 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!navigator.onLine) return 'offline';
 
     try {
-      const snap = await getDoc(groupDoc(groupId));
-      if (!snap.exists()) return 'not-found';
-      const group = { ...snap.data(), id: snap.id } as Group;
-      if (group.members?.includes(user.uid)) return 'joined';
-      const claimable = claimId && group.participants?.some(p => p.id === claimId) && !group.claims?.[claimId];
-      const name = claimable ? adoptParticipantName(group, claimId) : userName;
-      // Add member uid + store display name so others can show our name without Firestore reads.
-      // FieldPath: participant ids are UUIDs, which aren't safe in a dotted string path.
-      await updateDoc(groupDoc(groupId),
-        'members', arrayUnion(user.uid),
-        new FieldPath('memberNames', user.uid), name,
-        ...(claimable ? [new FieldPath('claims', claimId), user.uid] : []),
-      );
-      return 'joined';
+      // A transaction re-reads the group if it changes underneath us, so a
+      // claim made by someone else a moment ago is seen, not overwritten.
+      let claimedFrom: Group | null = null;
+      const result = await runTransaction(db, async tx => {
+        const snap = await tx.get(groupDoc(groupId));
+        if (!snap.exists()) return 'not-found' as const;
+        const group = { ...snap.data(), id: snap.id } as Group;
+        if (group.members?.includes(user.uid)) return 'joined' as const;
+        if (claimId) {
+          // They said "that's me": never fall back to joining as a new person,
+          // or the group would count them twice.
+          if (!group.participants?.some(p => p.id === claimId)) return 'claim-taken' as const;
+          const owner = group.claims?.[claimId];
+          if (owner && owner !== user.uid) return 'claim-taken' as const;
+        }
+        // Someone who left and is coming back keeps their earlier claim: they are
+        // recognised as that person already, so no new claim is written (the
+        // rules allow one claim per member, and re-writing the same one is refused).
+        const writeClaim = !!claimId && !Object.values(group.claims ?? {}).includes(user.uid);
+        const name = writeClaim ? nameAfterClaim(group, claimId) : userName;
+        claimedFrom = writeClaim ? group : null;
+        // Add member uid + store display name so others can show our name without Firestore reads.
+        // FieldPath: participant ids are UUIDs, which aren't safe in a dotted string path.
+        tx.update(groupDoc(groupId),
+          'members', arrayUnion(user.uid),
+          new FieldPath('memberNames', user.uid), name,
+          ...(writeClaim ? [new FieldPath('claims', claimId), user.uid] : []),
+        );
+        return 'joined' as const;
+      });
+      // Only after the write went through (a transaction may run more than once)
+      if (result === 'joined' && claimId && claimedFrom) adoptParticipantName(claimedFrom, claimId);
+      return result;
     } catch (err) {
       console.error('[Splitr] join failed', err);
       return navigator.onLine ? 'error' : 'offline';
@@ -744,7 +768,8 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const getUsersInGroup = useCallback((): { id: string; name: string }[] => {
     if (!currentGroup) return [];
 
-    const memberUsers = currentGroup.members.map(m => ({
+    const { members, unclaimed } = groupPeople(currentGroup);
+    const memberUsers = members.map(m => ({
       id: m,
       name: m === uid
         ? userName
@@ -752,7 +777,6 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }));
 
     // A claimed placeholder is now that member, so it isn't listed twice
-    const unclaimed = (currentGroup.participants ?? []).filter(p => !currentGroup.claims?.[p.id]);
     return [...memberUsers, ...unclaimed];
   }, [currentGroup, uid, userName]);
 

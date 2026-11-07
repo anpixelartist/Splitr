@@ -9,7 +9,7 @@ import { SettleModal } from '../components/SettleModal';
 import { BalanceCard } from '../components/BalanceCard';
 import { useToast } from '../context/ToastContext';
 import { DEFAULT_CURRENCY, formatMoney, formatDate } from '../lib/money';
-import { unclaimedParticipants, claimedBy } from '../lib/claims';
+import { unclaimedParticipants, claimedBy, memberCount } from '../lib/claims';
 import { effectiveStatus, allowedActions, countsTowardBalances } from '../lib/payments';
 import type { Expense, PaymentStatus, SettlementRecord } from '../types';
 
@@ -153,6 +153,12 @@ export const GroupDetails: React.FC = () => {
     const result = await joinGroup(id, claimChoice && claimChoice !== 'new' ? claimChoice : undefined);
     setJoining(false);
     if (result === 'joined') showToast(`Joined ${currentGroup?.name ?? 'group'}`);
+    else if (result === 'claim-taken') {
+      // The list refreshes live; make them pick again rather than join as a duplicate
+      const taken = currentGroup?.participants?.find(p => p.id === claimChoice)?.name;
+      setClaimChoice(null);
+      showToast(`${taken ?? 'That name'} was already picked by someone who joined. Choose again.`, 'error');
+    }
     else if (result === 'offline') showToast("You're offline — connect to join this group.", 'error');
     else if (result === 'not-found') showToast('This group no longer exists.', 'error');
     else showToast("Couldn't join the group. Please try again.", 'error');
@@ -277,7 +283,7 @@ export const GroupDetails: React.FC = () => {
         <p className="text-sm text-gray-500 mb-1">You've been invited to</p>
         <h1 className="text-2xl font-bold text-gray-900 mb-1">{currentGroup.name}</h1>
         <p className="text-sm text-gray-400 mb-6">
-          {currentGroup.members.length + joinChoices.length} members · code{' '}
+          {memberCount(currentGroup)} members · code{' '}
           <span className="font-mono">{currentGroup.id}</span>
         </p>
         {joinChoices.length > 0 && (

@@ -33,3 +33,25 @@ export const unclaimedParticipants = <P extends { id: string }>(participants: P[
 /** The participant this member claimed, if any. */
 export const claimedBy = (claims: Claims, uid: string) =>
   Object.entries(claims ?? {}).find(([, v]) => v === uid)?.[0];
+
+type Roster = {
+  members: string[];
+  participants?: { id: string; name: string }[];
+  claims?: Record<string, string>;
+};
+
+/**
+ * Everyone in the group, each person once: app members plus the name-only
+ * participants nobody has claimed. A claimed participant *is* the member who
+ * claimed them, so counting both would list that person twice.
+ * Every member count and roster (home list, invite screen, connector) uses this.
+ */
+export const groupPeople = <G extends Roster>(group: G) => ({
+  members: group.members,
+  unclaimed: unclaimedParticipants(group.participants, group.claims) as NonNullable<G['participants']>,
+});
+
+export const memberCount = (group: Roster) => {
+  const { members, unclaimed } = groupPeople(group);
+  return members.length + unclaimed.length;
+};
