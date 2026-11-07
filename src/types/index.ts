@@ -37,6 +37,36 @@ export type Expense = {
   createdAt: string;
   editedBy?: string;    // who last edited it
   editedAt?: number;    // ms, server time
+  split?: SplitConfig;  // how it was split, so editing reopens it the same way (absent on older expenses)
+};
+
+// ── How an expense is split (see lib/splits.ts) ─────────────────────────────
+// Stored next to the resulting `splits`, which stay the source of truth for
+// balances. Only the fields for the chosen method are present.
+
+export type SplitMethod = 'equal' | 'exact' | 'percent' | 'shares' | 'itemized';
+
+export type SplitItem = {
+  name: string;
+  price: number;                    // per unit
+  qty: number;
+  portions: Record<string, number>; // who shared it and how much of it each had (1 each = evenly)
+};
+
+export type SplitCharge = {
+  kind: 'tax' | 'service' | 'tip' | 'fee' | 'discount';
+  mode: 'percent' | 'amount';       // percent of the items, or a fixed amount
+  value: number;
+};
+
+export type SplitConfig = {
+  method: SplitMethod;
+  people: string[];                  // who is in this expense
+  amounts?: Record<string, number>;  // exact: typed amounts (blank people share the rest)
+  percents?: Record<string, number>; // percent: typed percentages (blank people share the rest)
+  shares?: Record<string, number>;   // shares: parts / ratio / weight per person (blank = 1)
+  items?: SplitItem[];               // itemized
+  charges?: SplitCharge[];           // itemized: tax, service, tip, fees, discounts
 };
 
 export type Balance = {

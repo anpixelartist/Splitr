@@ -255,6 +255,18 @@ describe('expenses', () => {
     }));
   });
 
+  it('can keep how they were split, but only the known fields', async () => {
+    const split = { method: 'shares', people: ['alice', 'bob'], shares: { alice: 1, bob: 1 } };
+    await assertSucceeds(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 's1'), { ...expense('s1', 'bob'), split }));
+    await assertSucceeds(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 's2'), {
+      ...expense('s2', 'bob'),
+      split: { method: 'itemized', people: ['alice', 'bob'], items: [{ name: 'Tea', price: 30, qty: 1, portions: { alice: 1, bob: 1 } }], charges: [] },
+    }));
+    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 's3'), { ...expense('s3', 'bob'), split: { ...split, junk: 'x' } }));
+    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 's4'), { ...expense('s4', 'bob'), split: { ...split, method: 'magic' } }));
+    await assertFails(setDoc(doc(as('bob'), 'groups', GID, 'expenses', 's5'), { ...expense('s5', 'bob'), split: 'shares' }));
+  });
+
   it('only admins can delete them', async () => {
     await assertFails(deleteDoc(doc(as('bob'), 'groups', GID, 'expenses', 'e1')));
     await assertSucceeds(deleteDoc(doc(as('alice'), 'groups', GID, 'expenses', 'e1')));
