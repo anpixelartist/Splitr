@@ -3,6 +3,7 @@ import { useGroup } from '../context/GroupContext';
 import { useAuth } from '../context/AuthContext';
 import { X, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { splitEqually } from '../lib/settlement';
+import { splitExact } from '../lib/splits';
 import type { Expense } from '../types';
 import { DEFAULT_CURRENCY, currencyDigits, currencySymbol, formatMoney } from '../lib/money';
 
@@ -51,6 +52,10 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
   // modal is open are included by default.
   const [excludedUsers, setExcludedUsers] = useState<Set<string>>(init.excluded);
 
+  // Exact amounts: blank boxes share whatever is left of the total (issue #17)
+  const exact = splitExact(parseFloat(amount), users.map(u => u.id), exactSplits, digits);
+  const autoIds = new Set(exact.auto);
+
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,26 +92,24 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
       }
       splits.push(...splitEqually(totalAmount, active, digits));
     } else {
-      // Compare in whole cents to avoid floating-point drift
-      let sumCents = 0;
-      for (const uid of users.map(u => u.id)) {
-        const val = parseFloat(exactSplits[uid] || '0');
-        if (isNaN(val) || val < 0) {
-          setError('Amounts can\'t be negative.');
-          return;
-        }
-        const cents = Math.round(val * 100);
-        if (cents > 0) { splits.push({ userId: uid, amount: cents / 100 }); sumCents += cents; }
+      if (exact.problem === 'negative') {
+        setError('Amounts can\'t be negative.');
+        return;
+      }
+      if (exact.problem === 'over') {
+        setError(`That's ${formatMoney(-exact.remaining, currency)} more than the total of ${formatMoney(totalAmount, currency)}.`);
+        return;
+      }
+      if (exact.problem === 'unassigned') {
+        setError(`${formatMoney(exact.remaining, currency)} isn't assigned to anyone yet. Clear someone's box to give it to them, or change the amounts.`);
+        return;
+      }
+      for (const u of users) {
+        const share = exact.shares[u.id] ?? 0;
+        if (share > 0) splits.push({ userId: u.id, amount: share });
       }
       if (splits.length === 0) {
         setError('Enter at least one amount.');
-        return;
-      }
-      const totalCents = Math.round(totalAmount * 100);
-      if (sumCents !== totalCents) {
-        setError(
-          `Amounts don't add up — off by ${formatMoney(Math.abs(sumCents - totalCents) / 100, currency)}. Total must equal ${formatMoney(totalAmount, currency)}.`,
-        );
         return;
       }
     }
@@ -257,12 +260,17 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <p className="text-xs text-gray-500 mb-2">Enter exact amounts for each person:</p>
+                  <p className="text-xs text-gray-500 mb-2">
+                    Enter amounts for some people. Whatever is left is shared between the empty boxes. Type 0 to leave someone out.
+                  </p>
                   {users.map(u => (
                     <div key={u.id} className="flex items-center gap-3 p-2 border rounded-lg bg-gray-50">
                       <span className="font-medium text-gray-800 flex-1 truncate">
                         {u.id === user?.uid ? 'Me' : u.name}
                       </span>
+                      {autoIds.has(u.id) && (
+                        <span className="text-xs text-gray-400">auto</span>
+                      )}
                       <div className="relative w-32">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{symbol}</span>
                         <input
@@ -271,8 +279,10 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
                           step={step}
                           min="0"
                           className="w-full border-none shadow-sm rounded-md pl-7 pr-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
-                          placeholder="0.00"
-                          value={exactSplits[u.id] || ''}
+                          // An empty box shows the share it will get automatically
+                          placeholder={autoIds.has(u.id) && amount ? (exact.shares[u.id] ?? 0).toFixed(digits) : (0).toFixed(digits)}
+                          aria-label={`${u.id === user?.uid ? 'My' : `${u.name}'s`} share${autoIds.has(u.id) && amount ? `, automatically ${(exact.shares[u.id] ?? 0).toFixed(digits)}` : ''}`}
+                          value={exactSplits[u.id] ?? ''}
                           onChange={e => {
                             setExactSplits(prev => ({ ...prev, [u.id]: e.target.value }));
                             setError(null);
@@ -282,6 +292,21 @@ export const AddExpenseModal: React.FC<Props> = ({ onClose, users, expense, read
                       </div>
                     </div>
                   ))}
+                  {/* Running total, so nobody has to do the maths */}
+                  {amount && !Number.isNaN(parseFloat(amount)) && (
+                    <p
+                      aria-live="polite"
+                      className={`text-sm pt-1 ${exact.problem === 'over' || exact.problem === 'unassigned' ? 'text-red-600 dark:text-red-400' : 'text-gray-500'}`}
+                    >
+                      {exact.problem === 'over'
+                        ? `Over the total by ${formatMoney(-exact.remaining, currency)}`
+                        : exact.problem === 'unassigned'
+                          ? `${formatMoney(exact.remaining, currency)} left to assign`
+                          : exact.auto.length > 0 && exact.remaining > 0
+                            ? `${formatMoney(exact.remaining, currency)} left, shared between ${exact.auto.length} ${exact.auto.length === 1 ? 'person' : 'people'}`
+                            : 'Adds up to the total'}
+                    </p>
+                  )}
                 </div>
               )}
             </div>
