@@ -8,16 +8,18 @@ import { ProfileModal } from '../components/ProfileModal';
 import { JoinCodeInput } from '../components/JoinCodeInput';
 import { useToast } from '../context/ToastContext';
 import { DEFAULT_CURRENCY } from '../lib/money';
+import { groupPeople } from '../lib/claims';
 import type { Group } from '../types';
 
 // Apple's system colours, picked per group so each one keeps its own icon colour
 const GROUP_TINTS = ['bg-[#0A84FF]', 'bg-[#30B0C7]', 'bg-[#34C759]', 'bg-[#FF9F0A]', 'bg-[#FF375F]', 'bg-[#BF5AF2]', 'bg-[#5E5CE6]'];
 const tintFor = (id: string) => GROUP_TINTS[[...id].reduce((h, c) => h + c.charCodeAt(0), 0) % GROUP_TINTS.length];
 
-const memberNamesOf = (group: Group) => [
-  ...group.members.map(uid => group.memberNames?.[uid] ?? '?'),
-  ...(group.participants ?? []).map(p => p.name),
-];
+// Claimed participants are the member who claimed them: listed once, not twice
+const memberNamesOf = (group: Group) => {
+  const { members, unclaimed } = groupPeople(group);
+  return [...members.map(uid => group.memberNames?.[uid] ?? '?'), ...unclaimed.map(p => p.name)];
+};
 
 export const Home: React.FC = () => {
   const { userName, contacts, addContact, isLocalOnly, authError, clearAuthError } = useAuth();

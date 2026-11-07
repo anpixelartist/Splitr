@@ -1,3 +1,4 @@
+import { memberCount } from '../../../src/lib/claims';
 import { currencyOf, isSettled, moneyIn, myNet, summarize } from '../group';
 import { READ_ONLY, plural, run, type RegisterTool } from './common';
 
@@ -17,7 +18,7 @@ export const registerListGroups: RegisterTool = (server, { session, now = Date.n
     if (groups.length === 0) return 'You are not in any Splitr groups yet. Create or join one in the app.';
     const lines = await Promise.all(groups.map(async g => {
       const { balances } = summarize(await session.groupData(g), now());
-      const people = g.members.length + (g.participants ?? []).filter(p => !g.claims?.[p.id]).length;
+      const people = memberCount(g);
       return `- ${g.name} (code ${g.id}) · ${currencyOf(g)} · ${plural(people, 'person', 'people')} · ${describeNet(myNet(balances, session.uid), moneyIn(g))}`;
     }));
     return `You're in ${plural(groups.length, 'group')}:\n${lines.join('\n')}`;

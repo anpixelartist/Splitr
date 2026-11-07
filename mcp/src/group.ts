@@ -4,7 +4,7 @@
 
 import type { Expense, Group, SettlementRecord } from '../../src/types';
 import { calculateBalances, calculateSettlements, isSettled } from '../../src/lib/settlement';
-import { applyClaims, resolveId } from '../../src/lib/claims';
+import { applyClaims, resolveId, groupPeople } from '../../src/lib/claims';
 import { countsTowardBalances, effectiveStatus } from '../../src/lib/payments';
 import { DEFAULT_CURRENCY, currencyDigits, formatMoney } from '../../src/lib/money';
 import type { Doc, Firestore } from './firestore';
@@ -52,11 +52,11 @@ export const adminsOf = (g: Group): string[] =>
  * name-only participants nobody has claimed (same as getUsersInGroup).
  */
 export function peopleIn(g: Group, uid: string, myName?: string): { id: string; name: string }[] {
-  const members = g.members.map(m => ({
+  const { members: uids, unclaimed } = groupPeople(g);
+  const members = uids.map(m => ({
     id: m,
     name: (m === uid && myName) || g.memberNames?.[m] || `Member ${m.substring(0, 4)}`,
   }));
-  const unclaimed = (g.participants ?? []).filter(p => !g.claims?.[p.id]);
   return [...members, ...unclaimed];
 }
 
