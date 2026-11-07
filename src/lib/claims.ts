@@ -1,4 +1,5 @@
 import type { Expense, SettlementRecord } from '../types';
+import { remapSplitConfig } from './splits';
 
 // A name-only participant ("Priya") can be claimed by the real person when
 // they join. Expenses are immutable, so instead of rewriting them the group
@@ -21,6 +22,7 @@ export function applyClaims(
       ...e,
       paidBy: r(e.paidBy),
       splits: e.splits.map(s => ({ ...s, userId: r(s.userId) })),
+      ...(e.split ? { split: remapSplitConfig(e.split, r) } : {}),
     })),
     settlements: settlements.map(s => ({ ...s, from: r(s.from), to: r(s.to) })),
   };

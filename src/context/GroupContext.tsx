@@ -614,7 +614,7 @@ export const GroupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const updateExpense = async (
     id: string,
-    changes: Pick<Expense, 'description' | 'amount' | 'paidBy' | 'splits'>,
+    changes: Pick<Expense, 'description' | 'amount' | 'paidBy' | 'splits' | 'split'>,
   ) => {
     if (!currentGroupId || !uid) return;
     const gid = currentGroupId;
